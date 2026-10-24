@@ -31,7 +31,7 @@ flowchart TB
     end
 
     subgraph Data["Retrieval & Daten"]
-        Qdrant[("Qdrant (ADR-0006)<br/>Vektoren + ACL-Metadaten")]
+        Qdrant[("Qdrant (ADR-0006)<br/>Vektoren + ACL-Metadaten<br/>versionierte Collections")]
         MCP["MCP-Server (ADR-0008)<br/>kuratierte read-only Tools"]
         DBs[("Fach-DBs<br/>read-only · Row-Level-Security")]
         MCP --> DBs
@@ -48,6 +48,12 @@ flowchart TB
         OTel["OpenTelemetry + Grafana<br/>Latenz · Fehler · GPU"]
         Eval["Eval-Pipeline<br/>Golden Dataset · Ragas CI-Gate"]
         FB["Feedback-Loop<br/>thumbs · Kommentare"]
+        KEDA["KEDA + Autoscaler (ADR-0014)<br/>Queue-Länge → GPU-Replicas"]
+    end
+
+    subgraph Version["Versionierung (ADR-0013)"]
+        DVC["DVC<br/>Corpus + Pipeline-Artefakte"]
+        MLF["MLflow<br/>Model Registry · Eval-Runs"]
     end
 
     Web --> Ingress
@@ -61,7 +67,12 @@ flowchart TB
 
     Pipe -->|"embed"| Emb
     Pipe -->|"Chunks + acl_groups"| Qdrant
+    Pipe -.->|"versionierte Artefakte"| DVC
     Entra -.->|"Gruppen-Sync"| Pipe
+
+    MLF -.->|"Modell-Revisionen<br/>staging → prod"| GW
+    Eval -.->|"Eval-Runs"| MLF
+    KEDA -.->|"scale on queue len"| LLM
 
     Agent --> FB
     FB -->|"neue Eval-Cases"| Eval
@@ -93,6 +104,8 @@ flowchart TB
 | LLM-Observability | Langfuse (self-hosted) | 0011 |
 | Infra-Observability | OpenTelemetry + Grafana | 0011 |
 | Eval | Golden Dataset, Ragas/DeepEval, Feedback-API | 0012 |
+| Versionierung | DVC (Corpus, Pipeline-Artefakte), MLflow (Registry, Eval-Runs), Qdrant-Collection-Versionen | 0013 |
+| Skalierung | KEDA ScaledObject auf Queue-Länge (vLLM-Prometheus-Metriken), Cluster-Autoscaler für GPU-Nodes | 0014 |
 | Halluzinationsschutz | RAG + Citations (Reranking/Groundedness als Roadmap) | 0010 |
 
 ## Zentrale Risiken & Mitigation
@@ -103,13 +116,14 @@ flowchart TB
 | Rechte-Drift (Quell-ACLs vs. Index) | Inkrementeller ACL-Sync, max. Sync-Latenz als SLO, Audit-Log | 0007 |
 | Halluzination trotz RAG | Citations-Pflicht; Eval-Gate (Groundedness); Roadmap: Reranking/Groundedness-Check | 0010, 0012 |
 | Modellqualität onPrem < Cloud-LLM | ~70B-Klasse + Quantisierung; Gateway erlaubt Wechsel; Eval misst objektiv | 0002, 0003 |
-| GPU-Kapazität für 10k MA | Continuous Batching, Queue-Backpressure, horizontale Skalierung; Lasttest vor Rollout | 0003 |
+| GPU-Kapazität für 10k MA | KEDA auf Queue-Länge (nicht CPU-Util), Warm-Pool gegen Kaltstart, Node-Autoscaling; Lasttest vor Rollout | 0003, 0014 |
+| Antwort nicht reproduzierbar („welche Daten/Modell?") | DVC-Corpus-Versionen + MLflow-Registry + Index-/Modellversion im Trace | 0013 |
 
 ## Grobe Phasenplanung (Orientierung)
 
 | Phase | Inhalt | Grob-Schätzung |
 |---|---|---|
-| 0 – Setup | GPU-Nodes, Qdrant, Gateway, Langfuse im Cluster | 1–2 Wochen |
+| 0 – Setup | GPU-Nodes, Qdrant, Gateway, Langfuse, MLflow/DVC-Remote, KEDA im Cluster | 1–2 Wochen |
 | 1 – PoC | Ingestion (PDFs), RAG-Basis, Chat-API, Referenz-UI, Citations | 3–4 Wochen |
 | 2 – Härtung | ACL-Filter + AD-Sync, MCP-Tools, Golden Dataset + CI-Evals | 3–4 Wochen |
 | 3 – Pilot | Fachbereich-Pilot (~100 MA), Feedback-Loop, Lasttest | 4–6 Wochen |

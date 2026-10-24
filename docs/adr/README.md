@@ -16,6 +16,8 @@ Alle ADRs folgen einem vereinfachten MADR-Format: Kontext → Entscheidung → A
 | [0010](0010-anti-halluzination.md) | Halluzinationsminderung | accepted | Citations als Pflicht, Reranking/Groundedness als Option |
 | [0011](0011-observability.md) | Observability & Tracing | accepted | Langfuse self-hosted + OpenTelemetry/Grafana |
 | [0012](0012-eval-strategie.md) | Evaluationsstrategie | accepted | Golden Dataset + CI-Evals + User-Feedback-Loop |
+| [0013](0013-modell-datenversionierung.md) | Modell- & Datenversionierung | accepted | DVC (Corpus/Pipeline) + MLflow (Registry/Eval-Runs) |
+| [0014](0014-skalierung-keda-gpu.md) | Skalierung GPU-Workloads | accepted | KEDA, Queue-Längen-basiert, Node-Autoscaling |
 
 ## Entscheidungslogik (Zusammenhang)
 
@@ -30,5 +32,7 @@ Qualität
   ├─> Citations (0010)
   └─> Eval-Pipeline (0012)
 Betrieb
-  └─> Langfuse + OTel (0011)
+  ├─> Langfuse + OTel (0011)
+  ├─> Versionierung: DVC + MLflow (0013)
+  └─> Skalierung: KEDA auf Queue-Länge (0014)
 ```

@@ -39,6 +39,8 @@ Diese Entscheidungen wurden mit dem Auftraggeber getroffen und sind in `docs/adr
 | Anti-Halluzination: Citations als Pflicht; Reranking/Groundedness/Fallback als Roadmap | ADR-0010, accepted |
 | Observability: Langfuse self-hosted + OTel/Grafana; Datenschutz-Pflichten für Traces | ADR-0011, accepted |
 | Eval: Golden Dataset + CI-Evals (Ragas/DeepEval) + User-Feedback-Loop | ADR-0012, accepted |
+| Versionierung: DVC (Corpus, Pipeline-Artefakte) + MLflow (Model Registry, Eval-Runs); versionierte Qdrant-Collections | ADR-0013, accepted |
+| Skalierung: KEDA ScaledObject auf Queue-Länge (vLLM-Prometheus-Metriken), Node-Autoscaling, Warm-Pool vs. Scale-to-Zero | ADR-0014, accepted |
 
 Aktuellen Stand immer zuerst aus `docs/adr/README.md` lesen – einzelne ADRs können sich geändert haben.
 
@@ -78,6 +80,8 @@ Aktuellen Stand immer zuerst aus `docs/adr/README.md` lesen – einzelne ADRs k�
 - ACL-Metadaten-Filter (0007) ⇒ Ingestion muss AD-Gruppen-Sync enthalten; Prompt-Cache user-scoped (0002)
 - Embedding-Wechsel (0009) ⇒ Index-Versionierung + Re-Indexierung in Qdrant (0006)
 - Citations (0010) ⇒ API-Response enthält `citations`; Retrieval-Metadaten bis zur Response tragen (0005)
+- Langfuse vs. MLflow (0011/0013): Langfuse = Request-Traces, MLflow = Registry + Eval-Experimente – keine Doppelung einführen
+- KEDA (0014) ⇒ Queue-Backpressure am Gateway Pflicht; GPU-Kaltstart ⇒ `minReplicaCount ≥ 1` zu Geschäftszeiten
 
 ## Tonalität für die Präsentation
 
