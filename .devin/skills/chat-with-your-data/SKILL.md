@@ -47,8 +47,8 @@ Aktuellen Stand immer zuerst aus `docs/adr/README.md` lesen – einzelne ADRs k�
 ## Repo-Struktur & Konventionen
 
 - ADRs: `docs/adr/NNNN-titel.md`, durchnummeriert ab 0001, vereinfachtes MADR-Format
-- ADR-Index mit Entscheidungslogik: `docs/adr/README.md`
 - Architektur: `docs/architecture.md` – Mermaid-Diagramm + Request-Flow + Komponenten- und Risikotabellen + Phasenplanung
+- LikeC4: `c4_architecture/architecture.c4` – ein Modell, zoombare Views L1 (Kontext) → L2 (Container) → L3 (Komponenten) → L4 (Deployment/KEDA); Ebenen-Tabelle in `c4_architecture/README.md`
 - Arbeitsnotizen/Aufgabenstellung: `Structure.md` (roh, nicht verschönern)
 - Sprache aller Docs: **Deutsch**
 
@@ -71,7 +71,7 @@ Aktuellen Stand immer zuerst aus `docs/adr/README.md` lesen – einzelne ADRs k�
 
 1. **Neue Entscheidung/Frage klären:** Offene Punkte zuerst dem Nutzer stellen (Auswahlfragen mit Optionen + Trade-offs), dann als ADR dokumentieren – nicht einfach selbst festlegen. Nächste freie Nummer verwenden, Index aktualisieren.
 2. **Entscheidung ändern:** Alten ADR auf `superseded by ADR-XXXX` setzen, neuen ADR anlegen, Diagramm + Komponenten-Tabelle synchronisieren. Keine ADRs umschreiben – Nachvollziehbarkeit ist der Zweck.
-3. **Diagramm aktualisieren:** `docs/architecture.md` anpassen; Mermaid-Kompatibilität sicherstellen (Label mit Sonderzeichen in `"…"`, `<br/>` für Zeilenumbrüche). ADR-Referenzen in Subgraph-Titeln pflegen.
+3. **Diagramm aktualisieren:** `docs/architecture.md` (Mermaid) **und** `c4_architecture/architecture.c4` (LikeC4) synchron halten; Mermaid: Label mit Sonderzeichen in `"…"`, `<br/>` für Zeilenumbrüche. ADR-Referenzen in Labels/descriptions pflegen.
 4. **Konsistenz wahren:** Jede Komponente im Diagramm sollte einem ADR zugeordnet sein; neue Risiken in die Risikotabelle aufnehmen.
 
 ## Implizite Abhängigkeiten beachten

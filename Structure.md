@@ -3,7 +3,7 @@
 Um ein Konzept der Lösung zu bekommen, benötige ich ADRs die nachvollziehbar machen, warum etwas wie entschieden wurde. 
 
 > **Ergebnis der Konzeption:**
-> - 12 ADRs unter [`docs/adr/`](docs/adr/README.md) (Index mit Entscheidungslogik)
+> - 14 ADRs unter [`docs/adr/`](docs/adr/README.md) (Index mit Entscheidungslogik)
 > - Architekturdiagramm (Mermaid, präsentationsfertig) unter [`docs/architecture.md`](docs/architecture.md)
 
 ## ADRs
@@ -20,12 +20,18 @@ Um ein Konzept der Lösung zu bekommen, benötige ich ADRs die nachvollziehbar m
     - Tracing / US SaaS
 
 ### Herausforderungen
-- Datenschutz ()
+- Datenschutz
 - Datenqualität 
-    - RAG CI?
+    - RAG CI
+        - Rechte (Prompt Cache Gefahr personenbezogene Daten leakage)
+        - Nutzerbasierte Dokumenten (RAG attribute + MCP)
+        - Chatobot 
     - RAG Validierung? 
-- Rechte (Prompt Cache Gefahr personenbezogene Daten leakage)
+- MCP 
+    - ReadOnly Verbindungen
 - Nachvollziehbarkeit (Model, Umgebung, Daten)
+    - DVC, MLFLow 
+        - LLM / Ingestion separierung
 - Skalierung
 
 
