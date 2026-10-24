@@ -65,7 +65,7 @@ flowchart TB
     Agent -->|"Traces: Prompt · Retrieval · Antwort"| LF
     Agent -.-> OTel
 
-    Pipe -->|"embed"| Emb
+    Pipe -->|"embed via LLM-Gateway"| GW
     Pipe -->|"Chunks + acl_groups"| Qdrant
     Pipe -.->|"versionierte Artefakte"| DVC
     Entra -.->|"Gruppen-Sync"| Pipe

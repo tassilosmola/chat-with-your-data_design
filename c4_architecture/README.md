@@ -11,12 +11,15 @@ Ein einziges Modell (`architecture.c4`), alle Ebenen sind **Views auf dasselbe M
 | `index` | **L1 · Systemkontext** | Akteur (10k MA), System, externe Systeme (Entra ID, Quellen, Fach-DBs, Modellquelle) | Klick auf *Chat with your Data* → L2 |
 | `l2_overview` | **L2 · Überblick** | Reduziert auf den Live-Request-Pfad: Web-UI, Ingress, Chat API, Gateway, vLLM, Embedding, Qdrant, MCP + externe Systeme | **Default-Zoom aus L1**; Klick auf *Chat API / Gateway / Qdrant* → L3 |
 | `l2_container` | **L2 · Container** | Alle Container, **gruppiert nach Funktionsbereichen** (Zugriff, Chat-Backend, Modell-Serving, Retrieval & Daten, Ingestion, Observability, Versionierung, Skalierung) | Klick auf *Chat API / Ingestion / Gateway / Qdrant* → L3 |
+| `l2_llm_abstraktion` | **L2 · LLM-Abstraktionsschicht** | Gezielte Sicht auf das LLM-Gateway: **Konsumenten** (Chat API = Serving, Ingestion = Embeddings) → Gateway (aufgeklappt mit Komponenten) → **Backends** (vLLM, Embedding) + Governance (MLflow, Langfuse) | Klick auf *LLM-Gateway* → `l3_gateway` |
 | `l3_api` | **L3 · Komponenten** | Chat API: Auth-MW → Agent → Retrieval(ACL) / Tool-Client → Citations → Feedback | – |
 | `l3_ingest` | **L3 · Komponenten** | Ingestion: Konnektoren → Parser → Chunker → ACL-Enrichment → Embed → Index-Writer | – |
 | `l3_gateway` | **L3 · Komponenten** | LLM-Gateway: Router, Rate-Limit/Backpressure, user-scoped Cache, Trace-Exporter | – |
 | `l3_qdrant` | **L3 · Komponenten** | Qdrant-Interna: versionierte Collections, `acl_groups` Payload-Index | – |
 | `l4_deployment` | **L4 · Deployment** | OnPrem DC → K8s Cluster → CPU- vs. GPU-Nodepool, Pods, Operatoren | Klick auf *GPU Nodepool* → `l4_scaling` |
 | `l4_scaling` | **L4 · Skalierung** | KEDA ScaledObject (Queue-Länge `num_requests_waiting`) → vLLM-Replicas; Cluster-Autoscaler → GPU-Nodes; Warm-Pool vs. Scale-to-Zero | – |
+| `flow_rag_ingestion` | **Flow · Ingestion** | *Dynamic View* – nummerierte Schrittfolge: Dokumente → Parser → Chunker → ACL-Enrichment (AD-Gruppen) → Embeddings via Gateway → Upsert in `rag_vN` → DVC-Artefakte | – |
+| `flow_rag_serving` | **Flow · Serving** | *Dynamic View* – nummerierte Schrittfolge: Anfrage → OIDC → Agent → parallel Retrieval (ACL-Filter) + Tool-Calls → LLM via Gateway → Citations → Antwort + Trace | – |
 
 ## Ansehen
 

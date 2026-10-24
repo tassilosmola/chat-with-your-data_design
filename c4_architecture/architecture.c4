@@ -4,8 +4,10 @@
 //   L1  index            – Systemkontext (Akteur + System + externe Systeme)
 //   L2  l2_overview      – reduzierte Sicht: nur Live-Request-Pfad (Default-Zoom)
 //   L2  l2_container     – alle Container, gruppiert nach Funktionsbereichen
+//   L2  l2_llm_abstraktion – gezielte Sicht auf das LLM-Gateway (Serving + Ingestion)
 //   L3  l3_api / l3_ingest / l3_gateway / l3_qdrant – Komponenten-Ebene
 //   L4  l4_deployment / l4_scaling – Deployment (K8s, KEDA, GPU-Nodes)
+//   Flow flow_rag_ingestion / flow_rag_serving – nummerierte Ablauf-Diagramme
 // Im LikeC4-Viewer: Elemente mit eigenen Scoped Views sind anklickbar → Zoom.
 // ============================================================================
 
@@ -482,6 +484,32 @@ views {
     }
   }
 
+  // --- L2c: LLM-Gateway als Abstraktionsschicht --------------------------------
+  // Gezielte Sicht auf ADR-0002: Serving UND Ingestion über dasselbe Gateway
+  view l2_llm_abstraktion of cwyd {
+    title 'L2 · LLM-Abstraktionsschicht'
+    description '''
+      Alle Modellzugriffe laufen über dasselbe LLM-Gateway (ADR-0002) –
+      das Chat-Serving genauso wie die Embeddings der Ingestion (ADR-0009).
+      Modellwechsel ist rein konfigurativ; MLflow steuert Modell-Revisionen
+      staging→prod (ADR-0013). Pflichten am Gateway: Rate-Limit/Backpressure
+      (KEDA-Voraussetzung, ADR-0014), user-scoped Cache (#pii), Tracing
+      nach Langfuse (ADR-0011).
+      Klick auf LLM-Gateway → Zoom auf Komponenten.
+    '''
+    group 'Konsumenten (Serving + Ingestion)' {
+      include api, ingest
+    }
+    include gateway, gateway.*
+    group 'Modell-Backends' {
+      color amber
+      include llm, emb
+    }
+    group 'Governance' {
+      include mlflow, langfuse
+    }
+  }
+
   // --- L3: Komponenten -------------------------------------------------------
   view l3_api of cwyd.api {
     title 'L3 · Chat API – Komponenten'
@@ -532,5 +560,58 @@ views {
     include dc.cluster.ca
     include dc.cluster.gpuPool.llmPod
     include dc.cluster.cpuPool.gwPod
+  }
+
+  // --- Flow: RAG-Ingestion (nummerierte Schrittfolge) ---------------------------
+  dynamic view flow_rag_ingestion {
+    title 'Flow · RAG-Ingestion'
+    description '''
+      Ein Ingestion-Lauf: Dokumente → Chunks → ACL-Metadaten → Embeddings
+      via LLM-Gateway (ADR-0002, -0009) → versionierte Qdrant-Collection.
+      Die Nummerierung zeigt die Schrittfolge.
+    '''
+
+    cwyd.ingest.conn -> docsrc 'liest Dokumente'
+    cwyd.ingest.conn -> cwyd.ingest.parser 'Text + Struktur extrahieren'
+    cwyd.ingest.parser -> cwyd.ingest.chunker 'Chunking (Parameter DVC-versioniert, ADR-0013)'
+    cwyd.ingest.aclenrich -> entra 'AD-Gruppen abrufen (Sync, ADR-0007)'
+    cwyd.ingest.chunker -> cwyd.ingest.aclenrich 'Chunks'
+    cwyd.ingest.aclenrich -> cwyd.ingest.embedder 'Chunks + acl_groups'
+    cwyd.ingest.embedder -> cwyd.gateway 'Embedding-Requests'
+    cwyd.gateway -> cwyd.emb 'bge-m3 multilingual (ADR-0009)'
+    cwyd.emb -> cwyd.gateway 'Vektoren'
+    cwyd.gateway -> cwyd.ingest.embedder 'Vektoren'
+    cwyd.ingest.embedder -> cwyd.ingest.writer 'Chunks + Vektoren + Metadaten'
+    cwyd.ingest.writer -> cwyd.qdrant 'Upsert in Collection rag_vN (ADR-0013)'
+    cwyd.ingest.writer -> cwyd.dvc 'Pipeline-Artefakte versionieren (ADR-0013)'
+  }
+
+  // --- Flow: RAG-Serving / Live-Request (nummerierte Schrittfolge) --------------
+  dynamic view flow_rag_serving {
+    title 'Flow · RAG-Serving (Chat-Anfrage)'
+    description '''
+      Live-Pfad einer Anfrage: Auth → Orchestrierung → Retrieval mit
+      serverseitigem ACL-Filter (ADR-0007) → Generation via LLM-Gateway
+      (ADR-0002) → Antwort mit Citations-Pflicht (ADR-0010).
+      Die Nummerierung zeigt die Schrittfolge.
+    '''
+
+    ma -> cwyd.webui 'Chat-Anfrage'
+    cwyd.webui -> cwyd.ingress 'HTTPS'
+    cwyd.ingress -> entra 'OIDC-Validierung (ADR-0005)'
+    cwyd.ingress -> cwyd.api.authmw 'JWT'
+    cwyd.api.authmw -> cwyd.api.agent 'User + AD-Gruppen'
+    parallel {
+      cwyd.api.agent -> cwyd.qdrant 'Query + serverseitiger ACL-Filter'
+      cwyd.api.agent -> cwyd.mcp 'Tool-Calls (optional, ADR-0008)'
+    }
+    cwyd.api.agent -> cwyd.gateway 'Kontext + Prompt'
+    cwyd.gateway -> cwyd.llm 'Inferenz (vLLM, ADR-0003)'
+    cwyd.llm -> cwyd.gateway 'generierte Antwort'
+    cwyd.gateway -> cwyd.api.agent 'Antwort'
+    cwyd.api.agent -> cwyd.api.citations 'Quellen anreichern (ADR-0010)'
+    cwyd.api.citations -> cwyd.webui 'Antwort + Citations'
+    cwyd.webui -> ma 'Antwort anzeigen'
+    cwyd.api.agent -> cwyd.langfuse 'Trace (ADR-0011)'
   }
 }
