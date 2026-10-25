@@ -1,38 +1,44 @@
 # Architecture Decision Records – „Chat with your Data"
 
-Alle ADRs folgen einem vereinfachten MADR-Format: Kontext → Entscheidung → Alternativen → Konsequenzen.
+Alle ADRs liegen unter [`docs/adr/`](docs/adr/) und folgen einem vereinfachten MADR-Format: Kontext → Entscheidung → Alternativen → Konsequenzen.
+
+- Architekturüberblick: [`docs/architecture.md`](docs/architecture.md)
+- Roadmap (v1 → v2 → v3+): [`docs/roadmap.md`](docs/roadmap.md)
+- Zoombares C4-Modell (LikeC4): [`c4_architecture/`](c4_architecture/README.md)
 
 | ADR | Titel | Status | Kurzentscheidung |
 |-----|-------|--------|------------------|
-| [0001](0001-deployment-onprem-kubernetes.md) | Deployment-Modell | accepted | OnPrem auf Kubernetes |
-| [0002](0002-llm-gateway-abstraktion.md) | LLM-Abstraktion | accepted | LLM-Gateway (LiteLLM) als einheitliche Schnittstelle |
-| [0003](0003-llm-modell-sizing.md) | LLM-Modell & GPU-Sizing | open | Sizing-Optionen abwägen, Gateway erlaubt späteren Wechsel |
-| [0004](0004-datenquellen.md) | Datenquellen | accepted | PDF/Dokumente via RAG + strukturierte Daten via Tools |
-| [0005](0005-zugriff-api-first.md) | Zugriffskanal | accepted | API-first, Frontend als Referenz-PoC |
-| [0006](0006-vektordatenbank-qdrant.md) | Vektordatenbank | accepted | Qdrant self-hosted |
-| [0007](0007-acl-metadata-filter.md) | Dokumentberechtigungen | accepted | Metadaten-Filter beim Retrieval |
-| [0008](0008-strukturierte-daten-mcp.md) | Zugriff strukturierte Daten | accepted | MCP-Tools / kuratierter API-Layer |
-| [0009](0009-embedding-strategie.md) | Embedding-Strategie | accepted | Self-hosted multilingual, via Gateway |
-| [0010](0010-anti-halluzination.md) | Halluzinationsminderung | accepted | Citations als Pflicht, Reranking/Groundedness als Option |
-| [0011](0011-observability.md) | Observability & Tracing | accepted | Langfuse self-hosted + OpenTelemetry/Grafana |
-| [0012](0012-eval-strategie.md) | Evaluationsstrategie | accepted | Golden Dataset + CI-Evals + User-Feedback-Loop |
-| [0013](0013-modell-datenversionierung.md) | Modell- & Datenversionierung | accepted | DVC (Corpus/Pipeline) + MLflow (Registry/Eval-Runs) |
-| [0014](0014-skalierung-keda-gpu.md) | Skalierung GPU-Workloads | accepted | KEDA, Queue-Längen-basiert, Node-Autoscaling |
+| [0001](docs/adr/0001-deployment-onprem-kubernetes.md) | Deployment-Modell | proposed | OnPrem auf bestehender Kubernetes-Plattform |
+| [0002](docs/adr/0002-llm-gateway-abstraktion.md) | LLM-Gateway | proposed | LiteLLM für Quotas, Backpressure, Routing – kein Response-Cache |
+| [0003](docs/adr/0003-llm-modell-sizing.md) | LLM-Modell & GPU-Sizing | open | ~70B Q4 / MoE auf 2 GPUs im PoC, Produktiv-Sizing per Lasttest |
+| [0004](docs/adr/0004-datenquellen.md) | Datenquellen & Pipeline | proposed | v1: Dokumente, feste RAG-Pipeline ohne Agent; v2: strukturierte Daten |
+| [0005](docs/adr/0005-zugriff-api-first.md) | Zugriffskanal | proposed | API-first, Auth in der API (inkl. Group-Overage), Postgres für Verläufe |
+| [0006](docs/adr/0006-vektordatenbank-qdrant.md) | Vektordatenbank | proposed | Qdrant wegen nativem Hybrid-Search; pgvector als KISS-Alternative |
+| [0007](docs/adr/0007-acl-metadata-filter.md) | Dokumentberechtigungen | proposed | ACL-Filter in Qdrant über Gruppen-IDs, kein Gruppen-Sync |
+| [0008](docs/adr/0008-strukturierte-daten-mcp.md) | Strukturierte Daten | proposed (v2) | MCP-Tools je Fachdomäne, On-Behalf-Of |
+| [0009](docs/adr/0009-embedding-strategie.md) | Embedding-Strategie | proposed | bge-m3 self-hosted (dense + sparse), via Gateway |
+| [0010](docs/adr/0010-anti-halluzination.md) | Halluzinationsminderung | proposed | Citations + "keine Quelle"-Schwelle + Citation-Check; Reranking als nächster Schritt |
+| [0011](docs/adr/0011-observability.md) | Observability & Compliance | proposed | Langfuse + bestehendes Monitoring; DSFA + Betriebsvereinbarung |
+| [0012](docs/adr/0012-eval-strategie.md) | Evaluationsstrategie | proposed | Deterministische Tests + Golden Dataset (Ragas) + Feedback |
+| [0013](docs/adr/0013-modell-datenversionierung.md) | Modell- & Datenversionierung | proposed | Manifest + Collection-Alias + Git-Pinning (statt DVC/MLflow) |
+| [0014](docs/adr/0014-skalierung-keda-gpu.md) | Skalierung GPU-Workloads | proposed | KEDA auf Request-Queue im festen GPU-Pool + Backpressure |
+| [0015](docs/adr/0015-use-case-scope-v1.md) | Use Case & Scope v1 | proposed | HR-Self-Service, 8 Bausteine, Rest = Roadmap mit Auslöser |
 
 ## Entscheidungslogik (Zusammenhang)
 
 ```
+Scope (0015): HR-Self-Service, minimal
 OnPrem (0001)
   └─> Self-hosted LLM + Embeddings (0003, 0009)
-        └─> Gateway-Abstraktion für Wechselbarkeit (0002)
+        └─> Gateway: Quotas + Backpressure (0002)
+              └─> KEDA auf Queue-Länge (0014)
 Datenquellen (0004)
-  ├─> PDFs → Qdrant (0006) mit ACL-Metadaten (0007)
-  └─> Strukturierte Daten → MCP-Tools (0008)
+  ├─> v1: PDFs → Qdrant (0006) mit ACL-Filter (0007)
+  └─> v2: Strukturierte Daten → MCP-Tools (0008)
 Qualität
-  ├─> Citations (0010)
-  └─> Eval-Pipeline (0012)
+  ├─> Citations + "keine Quelle" (0010)
+  └─> Eval: deterministisch + Golden Dataset (0012)
 Betrieb
-  ├─> Langfuse + OTel (0011)
-  ├─> Versionierung: DVC + MLflow (0013)
-  └─> Skalierung: KEDA auf Queue-Länge (0014)
+  ├─> Langfuse + bestehendes Monitoring, DSFA/Betriebsrat (0011)
+  └─> Versionierung leichtgewichtig (0013)
 ```

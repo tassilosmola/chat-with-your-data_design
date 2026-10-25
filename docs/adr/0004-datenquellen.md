@@ -1,34 +1,42 @@
-# ADR-0004: Datenquellen – PDFs + strukturierte Daten
+# ADR-0004: Datenquellen & Pipeline – v1 Dokumente, v2 strukturierte Daten
 
-- **Status:** accepted
-- **Datum:** 2026-10-24
-- **Zusammenhang:** ADR-0006 (Vektor-DB), ADR-0008 (MCP-Tools)
+- **Status:** proposed
+- **Datum:** 2026-10-25
+- **Zusammenhang:** ADR-0006 (Vektor-DB), ADR-0008 (MCP-Tools, v2), ADR-0015 (Scope)
 
 ## Kontext
 
-Die Aufgabe lässt Datenquellen frei wählbar. Entscheidend für die Architektur: unterschiedliche Quelltypen brauchen unterschiedliche Zugriffspfade – semantische Suche funktioniert für Dokumente, nicht für relationale Daten.
+Die Aufgabe lässt Datenquellen frei wählbar. Unterschiedliche Quelltypen brauchen unterschiedliche Zugriffspfade – semantische Suche funktioniert für Dokumente, nicht für relationale Daten (Aggregationen, exakte Werte).
+
+Die vorliegenden PoC-Daten (`rag-resources/`) sind **ausschließlich Dokumente**: Tarifvertrag, Manteltarifvertrag, Arbeitszeit- und Reisekostenrichtlinie (HR-Self-Service, ADR-0015).
 
 ## Entscheidung
 
-**Zwei Quelltypen, zwei Zugriffspfade:**
+**v1: Ein Quelltyp, eine feste Pipeline.**
 
-1. **PDF/Dokumente** (Richtlinien, Handbücher, Konzepte) → Ingestion-Pipeline → Chunking → Embeddings → Qdrant → RAG
-2. **Strukturierte Daten** (Tabellen/Fachdatenbanken) → kuratierte MCP-Tools → deterministischer, read-only Zugriff
+- **PDF/Dokumente** → Ingestion (Parsing inkl. Tabellen, Chunking, ACL-Metadaten) → Embeddings → Qdrant
+- Serving als **deterministische Pipeline** statt Agent:
+  1. Query-Rewriting mit Chat-Historie (Folgefragen → eigenständige Suchanfrage)
+  2. Retrieval mit ACL-Filter (ADR-0007)
+  3. Generation mit Kontext + Citations (ADR-0010)
+- Umsetzung in **plain Python** (FastAPI + OpenAI-SDK gegen Gateway + `qdrant-client`) – kein Agent-Framework nötig
 
-Das Orchestrator-Backend (Agent) entscheidet pro Anfrage, welcher Pfad – oder beide kombiniert – genutzt wird.
+**v2: Strukturierte Daten als zweiter Pfad** über kuratierte Tools (ADR-0008, MCP). Erst dann wird aus der Pipeline ein Tool-Calling-Ablauf (LLM wählt Retrieval und/oder Tool).
 
-Die Connector-Architektur ist bewusst erweiterbar (SharePoint/Confluence/FAQ später), ohne die Kernarchitektur zu ändern: neue Quelle = neuer Ingestion-Konnektor bzw. neues MCP-Tool.
+Die Ingestion ist über Konnektoren erweiterbar (SharePoint/Confluence/FAQ), ohne die Kernarchitektur zu ändern.
 
 ## Betrachtete Alternativen
 
 | Alternative | Warum verworfen |
 |---|---|
-| Nur Dokumente | Strukturierte Daten über Dump→Chunking→RAG verliert Präzision (Zahlen, Aggregationen halluzinationsanfällig) |
-| Nur strukturierte Daten | Deckt den typischen "Chat with your Data"-Use-Case (Dokumentenwissen) nicht ab |
-| SharePoint/Confluence in v1 | Konnektor-Aufwand (Auth, Export, Inkremente) verzögert PoC; Architektur hält Option offen |
+| Agent-Orchestrierung (LangChain/LlamaIndex) ab v1 | Bei nur einem Pfad kein Nutzen; nicht-deterministische Pfadwahl erschwert Eval und Debugging; zusätzliche Framework-Abhängigkeit |
+| Dokumente + strukturierte Daten in v1 | Keine strukturierten PoC-Daten vorhanden; Tool-Governance (Fachbereiche, Auth-Propagation) verzögert PoC |
+| Strukturierte Daten als Dump → Chunking → RAG | Verliert Präzision (Zahlen, Aggregationen halluzinationsanfällig) |
+| SharePoint/Confluence in v1 | Konnektor-Aufwand (Auth, Export, Inkremente, ACL-Mapping) verzögert PoC |
 
 ## Konsequenzen
 
-- Ingestion und Tool-Zugriff sind getrennte Pipelines mit eigener Qualitätssicherung (ADR-0012)
-- Agent-Orchestrierung wird benötigt (LangChain/LlamaIndex o.ä.) → Komplexität höher als "reines" RAG
-- Fachlich spannend für die Präsentation: zeigt Verständnis, dass "Daten" ≠ "Dokumente"
+- Pipeline-Schritte sind einzeln testbar und in Langfuse als Spans sichtbar (ADR-0011)
+- **Tabellen-Parsing** ist kritisch: Reisekosten-/Tarif-Tabellen (Pauschalen, Entgeltgruppen) müssen strukturerhaltend extrahiert werden (z.B. als Markdown-Tabelle im Chunk) – eigener Qualitätscheck in der Ingestion (ADR-0012)
+- **Dokument-Lebenszyklus:** Ingestion erkennt geänderte/gelöschte Dokumente über Content-Hash-Manifest (ADR-0013) und entfernt veraltete Chunks aus dem Index
+- Der Übergang zu v2 ist additiv: Retrieval wird zu einem „Tool“ unter mehreren

@@ -1,132 +1,55 @@
 # Architektur – „Chat with your Data"
 
-Alles läuft OnPrem im Kubernetes-Cluster (ADR-0001). Zwei Datenpfade: Dokumente über RAG (Qdrant), strukturierte Daten über kuratierte MCP-Tools. LLM und Embeddings hängen hinter einem Gateway und sind austauschbar.
+v1 ist ein HR-Self-Service-Bot (ADR-0015) für ~10k Mitarbeitende, OnPrem auf der bestehenden Kubernetes-Plattform (ADR-0001). Er besteht aus **8 Bausteinen**. Dokumente laufen über RAG mit ACL-Filter und Citations-Pflicht. Strukturierte Daten über MCP-Tools sind als v2 vorbereitet ([Roadmap](roadmap.md)).
 
-## Architekturdiagramm
-
-```mermaid
-flowchart TB
-    subgraph Zugriff["Zugriff (ADR-0005)"]
-        MA["~10k Mitarbeitende"]
-        Web["Referenz Web-UI (PoC)"]
-        Clients["Teams / weitere Clients (später)"]
-        MA --> Web
-        MA --> Clients
-    end
-
-    subgraph Edge["Edge"]
-        Ingress["K8s Ingress / API-GW"]
-        Entra["Entra ID / AD<br/>OIDC · Gruppen · ACL-Sync"]
-        Ingress <-->|"JWT + AD-Gruppen"| Entra
-    end
-
-    subgraph Core["Chat Backend"]
-        Agent["Chat API + Agent<br/>FastAPI · LangChain<br/>/chat · /feedback"]
-        GW["LLM-Gateway (ADR-0002)<br/>LiteLLM · Rate-Limits<br/>user-scoped Cache"]
-        LLM["LLM Serving (ADR-0003)<br/>vLLM · ~70B Q4 · GPU"]
-        Emb["Embedding-Service (ADR-0009)<br/>bge-m3 multilingual"]
-        Agent --> GW
-        GW --> LLM
-        GW --> Emb
-    end
-
-    subgraph Data["Retrieval & Daten"]
-        Qdrant[("Qdrant (ADR-0006)<br/>Vektoren + ACL-Metadaten<br/>versionierte Collections")]
-        MCP["MCP-Server (ADR-0008)<br/>kuratierte read-only Tools"]
-        DBs[("Fach-DBs<br/>read-only · Row-Level-Security")]
-        MCP --> DBs
-    end
-
-    subgraph Ingest["Ingestion-Pipeline (ADR-0004)"]
-        Conn["Konnektoren<br/>PDF / Dokumente"]
-        Pipe["Parser · Chunking<br/>ACL-Enrichment"]
-        Conn --> Pipe
-    end
-
-    subgraph Ops["Observability & Qualität (ADR-0011, -0012)"]
-        LF["Langfuse (self-hosted)<br/>LLM-Traces · Kosten · Prompts"]
-        OTel["OpenTelemetry + Grafana<br/>Latenz · Fehler · GPU"]
-        Eval["Eval-Pipeline<br/>Golden Dataset · Ragas CI-Gate"]
-        FB["Feedback-Loop<br/>thumbs · Kommentare"]
-        KEDA["KEDA + Autoscaler (ADR-0014)<br/>Queue-Länge → GPU-Replicas"]
-    end
-
-    subgraph Version["Versionierung (ADR-0013)"]
-        DVC["DVC<br/>Corpus + Pipeline-Artefakte"]
-        MLF["MLflow<br/>Model Registry · Eval-Runs"]
-    end
-
-    Web --> Ingress
-    Clients --> Ingress
-    Ingress --> Agent
-
-    Agent -->|"Query + User-Gruppen<br/>serverseitiger ACL-Filter (ADR-0007)"| Qdrant
-    Agent -->|"Function-Calling"| MCP
-    Agent -->|"Traces: Prompt · Retrieval · Antwort"| LF
-    Agent -.-> OTel
-
-    Pipe -->|"embed via LLM-Gateway"| GW
-    Pipe -->|"Chunks + acl_groups"| Qdrant
-    Pipe -.->|"versionierte Artefakte"| DVC
-    Entra -.->|"Gruppen-Sync"| Pipe
-
-    MLF -.->|"Modell-Revisionen<br/>staging → prod"| GW
-    Eval -.->|"Eval-Runs"| MLF
-    KEDA -.->|"scale on queue len"| LLM
-
-    Agent --> FB
-    FB -->|"neue Eval-Cases"| Eval
-    Eval -.->|"Gate vor Release"| Agent
-```
 
 ## Request-Flow (eine Chat-Anfrage)
 
-1. **Auth:** Nutzer → Ingress → OIDC-Token (Entra ID) mit AD-Gruppen
-2. **Orchestrierung:** Agent entscheidet – RAG-Pfad, Tool-Calls via MCP, oder beides
-3. **Retrieval:** Qdrant-Query mit **serverseitigem ACL-Filter** (User-Gruppen vs. `acl_groups`-Payload) → nur berechtigte Chunks
-4. **Generation:** Kontext + System-Prompt ("nur aus Kontext antworten") → LLM-Gateway → vLLM
-5. **Antwort:** Text + **Citations** (doc_id, Seite) → Nutzer kann jede Aussage prüfen
-6. **Nachvollziehbarkeit:** kompletter Trace in Langfuse (Modellversion, Chunks, Latenz, Kosten)
-7. **Qualität:** Feedback fließt ins Golden Dataset; CI-Evals verhindern Regressionen
+1. **Auth:** Nutzer → Ingress (TLS) → Chat-API validiert das Entra-Token; Gruppen-IDs aus dem Token bzw. per Graph bei Overage
+2. **Query-Rewriting:** Folgefrage + Historie → eigenständige Suchanfrage
+3. **Retrieval:** Hybrid-Query in Qdrant mit **serverseitigem ACL-Filter** → nur berechtigte Chunks. Unter Mindest-Score: feste Antwort „keine Quelle gefunden“, ohne LLM-Call
+4. **Generation:** Kontext + System-Prompt ("nur aus Kontext, jede Aussage zitieren") → Gateway (Quota-Prüfung) → vLLM
+5. **Antwort:** Text + **Citations** (Dokument, Seite). Citation-Check stellt sicher, dass nur Chunks aus dem Kontext zitiert werden
+6. **Nachvollziehbarkeit:** Trace in Langfuse mit Modell-, Prompt- und Index-Version; Verlauf in Postgres
+7. **Qualität:** Feedback → Golden Dataset; deterministische Tests + Ragas-Evals als Release-Gate
 
 ## Komponenten-Übersicht
 
-| Komponente | Technologie | ADR |
-|---|---|---|
-| Deployment | Kubernetes onPrem, GPU-Nodepool | 0001 |
-| Chat-Backend / Agent | FastAPI, LangChain | 0005, 0004 |
-| LLM-Gateway | LiteLLM Proxy | 0002 |
-| LLM-Serving | vLLM, ~70B Q4 (Sizing offen) | 0003 |
-| Embeddings | bge-m3 / multilingual-e5, self-hosted | 0009 |
-| Vektor-DB | Qdrant (ACL-Payload-Filter) | 0006, 0007 |
-| Strukturierte Daten | MCP-Server, kuratierte Tools | 0008 |
-| Auth | Entra ID / AD, OIDC | 0005, 0007 |
-| LLM-Observability | Langfuse (self-hosted) | 0011 |
-| Infra-Observability | OpenTelemetry + Grafana | 0011 |
-| Eval | Golden Dataset, Ragas/DeepEval, Feedback-API | 0012 |
-| Versionierung | DVC (Corpus, Pipeline-Artefakte), MLflow (Registry, Eval-Runs), Qdrant-Collection-Versionen | 0013 |
-| Skalierung | KEDA ScaledObject auf Queue-Länge (vLLM-Prometheus-Metriken), Cluster-Autoscaler für GPU-Nodes | 0014 |
-| Halluzinationsschutz | RAG + Citations (Reranking/Groundedness als Roadmap) | 0010 |
+| # | Komponente | Technologie | ADR |
+|---|---|---|---|
+| 1 | Referenz-UI | einfache Web-UI (austauschbar) | 0005 |
+| 2 | Chat-API | FastAPI, OpenAI-SDK, qdrant-client – kein Agent-Framework | 0004, 0005 |
+| 3 | LLM-Gateway | LiteLLM Proxy | 0002 |
+| 4 | LLM-Serving + Skalierung | vLLM, ~70B Q4 (Sizing offen); KEDA auf Queue-Länge | 0003, 0014 |
+| 5 | Embeddings | bge-m3, self-hosted | 0009 |
+| 6 | Vektor-DB | Qdrant (Hybrid, ACL-Payload-Filter, Collection-Alias) | 0006, 0007, 0013 |
+| 7 | Persistenz | Postgres (Verläufe, Feedback, Manifest) | 0005, 0013 |
+| 8 | LLM-Observability & Eval | Langfuse (Traces, Prompts, Datasets), Ragas in CI | 0011, 0012 |
+| – | Plattform (wiederverwendet) | Entra ID, Ingress, Prometheus/Grafana, CI/CD | 0001, 0011 |
+| v2 | Strukturierte Daten | MCP-Server je Fachdomäne, On-Behalf-Of | 0008 |
 
 ## Zentrale Risiken & Mitigation
 
 | Risiko | Mitigation | ADR |
 |---|---|---|
-| Personenbezogene Daten leaken über Prompt-Cache/Traces | User-scoped Cache-Keys, Langfuse-Zugriff + Retention, Pseudonymisierung | 0002, 0011 |
-| Rechte-Drift (Quell-ACLs vs. Index) | Inkrementeller ACL-Sync, max. Sync-Latenz als SLO, Audit-Log | 0007 |
-| Halluzination trotz RAG | Citations-Pflicht; Eval-Gate (Groundedness); Roadmap: Reranking/Groundedness-Check | 0010, 0012 |
-| Modellqualität onPrem < Cloud-LLM | ~70B-Klasse + Quantisierung; Gateway erlaubt Wechsel; Eval misst objektiv | 0002, 0003 |
-| GPU-Kapazität für 10k MA | KEDA auf Queue-Länge (nicht CPU-Util), Warm-Pool gegen Kaltstart, Node-Autoscaling; Lasttest vor Rollout | 0003, 0014 |
-| Antwort nicht reproduzierbar („welche Daten/Modell?") | DVC-Corpus-Versionen + MLflow-Registry + Index-/Modellversion im Trace | 0013 |
+| Unberechtigter Zugriff über RAG | ACL-Filter vor dem LLM, Gruppen-IDs statt Sync, deterministische ACL-Tests in CI | 0007, 0012 |
+| Personenbezogene Daten in Traces/Verläufen | Kein Response-Cache, Retention, Pseudonymisierung, rollenbasierter Langfuse-Zugriff | 0002, 0011 |
+| Betriebsrat/DSFA blockiert Rollout | Früh einbinden, Betriebsvereinbarung parallel zum PoC | 0011, 0015 |
+| Halluzination trotz RAG | Citations-Pflicht, „keine Quelle“-Schwelle, Citation-Check, Eval-Gate; nächster Schritt Reranking | 0010, 0012 |
+| Tabellen (Pauschalen, Entgeltgruppen) falsch geparst | Strukturerhaltendes Parsing, Ingestion-Checks, Golden-Dataset-Fragen zu Tabellenwerten | 0004, 0012 |
+| Indirekte Prompt-Injection über Dokumente | Kontext als Daten markiert, keine Tools/Aktionen in v1 | 0010 |
+| Modellqualität onPrem < Cloud-LLM | ~70B-Klasse, Eval misst objektiv, Gateway erlaubt Modellwechsel | 0002, 0003 |
+| GPU-Kapazität bei Lastspitzen | KEDA auf Queue-Länge im festen Pool, Warm-Pool, Backpressure (429); Lasttest vor Rollout | 0003, 0014 |
+| „Welche Daten/welches Modell?“ nicht beantwortbar | Versionsfelder als Pflicht in jedem Trace; Collection-Alias für Rollback | 0013 |
 
 ## Grobe Phasenplanung (Orientierung)
 
 | Phase | Inhalt | Grob-Schätzung |
 |---|---|---|
-| 0 – Setup | GPU-Nodes, Qdrant, Gateway, Langfuse, MLflow/DVC-Remote, KEDA im Cluster | 1–2 Wochen |
-| 1 – PoC | Ingestion (PDFs), RAG-Basis, Chat-API, Referenz-UI, Citations | 3–4 Wochen |
-| 2 – Härtung | ACL-Filter + AD-Sync, MCP-Tools, Golden Dataset + CI-Evals | 3–4 Wochen |
-| 3 – Pilot | Fachbereich-Pilot (~100 MA), Feedback-Loop, Lasttest | 4–6 Wochen |
-| 4 – Rollout | Stufenweiser Ausbau, Kanal-Entscheidung (Teams/Web), Betriebsübergabe | fortlaufend |
+| 0 – Setup | GPU-Nodepool, vLLM, Gateway, Qdrant, Langfuse auf bestehender Plattform; Kick-off mit Datenschutz + Betriebsrat | 1–2 Wochen |
+| 1 – PoC | Ingestion der HR-PDFs (inkl. Tabellen), RAG-Pipeline, Chat-API, Referenz-UI, Citations, erste 30 Golden-Fragen mit HR | 3–4 Wochen |
+| 2 – Härtung | ACL-Filter + Tests, Group-Overage, Eval-Gate in CI, KEDA + Backpressure, Retention | 2–3 Wochen |
+| 3 – Pilot | HR-Pilot (~100–300 MA), Feedback-Loop, Lasttest, Schwellwerte kalibrieren | 4–6 Wochen |
+| 4 – Rollout | Stufenweiser Ausbau auf 10k MA, Kanalentscheidung (Teams/Web), danach v2 nach [Roadmap](roadmap.md) | fortlaufend |
 
-*Annahme: 2–3 Personen, bestehende K8s-Plattform, Fachbereiche liefern Golden-Dataset-Fragen.*
+*Annahme: 2–3 Personen, bestehende K8s-Plattform, HR liefert Golden-Dataset-Fragen, GPU-Hardware verfügbar.*

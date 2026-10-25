@@ -1,8 +1,8 @@
-# ADR-0014: Skalierung – KEDA für GPU-Workloads
+# ADR-0014: Skalierung – KEDA auf Request-Queue für GPU-Workloads
 
-- **Status:** accepted
-- **Datum:** 2026-10-24
-- **Abhängig von:** ADR-0001 (K8s onPrem), ADR-0003 (LLM-Sizing/GPUs)
+- **Status:** proposed
+- **Datum:** 2026-10-25
+- **Abhängig von:** ADR-0001 (K8s onPrem), ADR-0002 (Backpressure am Gateway), ADR-0003 (LLM-Sizing/GPUs)
 
 ## Kontext
 
@@ -12,32 +12,39 @@
 - vLLM mit Continuous Batching sättigt eine GPU weit, bevor "Utilization" aussagekräftig wird
 - Ein zusätzlicher GPU-Pod mit Minuten-Kaltstart (Modell laden) muss **vor** der Lastspitze starten, nicht danach
 
+**OnPrem-Realität:** GPUs sind gekaufte Hardware in einem **festen GPU-Nodepool**. Scale-down spart kein Geld wie in der Cloud – der Nutzen liegt darin, **freie GPU-Kapazität anderen Workloads** zu geben (Eval-Läufe, Re-Indexierung/Embedding-Batches, andere ML-Teams im geteilten Pool) und Lastspitzen innerhalb des Pools abzufangen.
+
 ## Entscheidung
 
-**KEDA (Kubernetes Event-driven Autoscaling) als Skalierungsmechanismus:**
+**KEDA (Kubernetes Event-driven Autoscaling) mit Queue-Länge als Skalierungssignal:**
 
-- **vLLM-Deployment:** `ScaledObject` mit **Prometheus-Scaler** auf `vllm:num_requests_waiting` (bzw. Pending-Requests am LLM-Gateway, ADR-0002) → Replicas skalieren anhand der Queue-Länge, nicht der Utilization
-- **Cooldown/Min-Replikas:** `minReplicaCount ≥ 1` zu Geschäftszeiten (Kaltstart = Modell laden, Minuten). Optional `minReplicaCount: 0` über Nacht/Wochenende via KEDA `Cron`-Trigger – bewusster Trade-off zwischen GPU-Einsparung und Kaltstart-Latenz
-- **Node-Ebene:** Cluster-Autoscaler provisioniert GPU-Nodes, sobald Pods pending hängen. Kaltstart-Mitigation: Modellgewichte auf Node-Cache (hostPath/NFS) vorgelegt oder InitContainer mit internem Mirror – sonst addiert sich Node-Provisionierung + Model-Download
-- **Restliche Services:** Chat-API, Gateway, Ingestion-Worker ebenfalls KEDA/HPA; Ingestion-Worker skalieren auf Upload-/Queue-Tiefe
+- **vLLM-Deployment:** `ScaledObject` mit **Prometheus-Scaler** auf `vllm:num_requests_waiting` → Replicas skalieren anhand der Warteschlange, nicht der Utilization
+- **Grenzen:** `minReplicaCount` = Basislast aus Lasttest (Warm-Pool, kein Kaltstart zu Geschäftszeiten); `maxReplicaCount` = Kapazität des GPU-Pools
+- **Außerhalb der Geschäftszeiten** (KEDA `Cron`-Trigger): auf Minimum reduzieren → frei werdende GPUs für Eval- und Ingestion-Batches. Scale-to-Zero nur, wenn ein Kaltstart am Morgen per Cron **vorgewärmt** wird.
+- **Über der Pool-Grenze** skaliert nichts mehr – dann greift **Backpressure am Gateway** (Queue-Limit, Timeout, `429` + Retry-After, ADR-0002). Lieber "bitte kurz warten" als Timeouts für alle.
+- **Kaltstart verkürzen:** Modellgewichte aus internem Mirror auf Node-lokalen Cache (hostPath/PVC) vorladen
+- **Node-Ebene:** OnPrem i.d.R. **kein** Cluster-Autoscaler für Bare-Metal-GPU-Nodes → fester Pool, Erweiterung per Kapazitätsplanung. In einer Private Cloud mit GPU-Provisionierung kann ein Cluster-Autoscaler ergänzt werden.
+- **Übrige Services** (Chat-API, Gateway, Ingestion-Worker): Standard-HPA bzw. KEDA auf Queue-Tiefe der Ingestion
+
+**PoC-Hinweis:** Mit 2 GPUs (= 1 vLLM-Replica, ADR-0003) gibt es im PoC nichts zu skalieren. Im PoC werden **Metrik, ScaledObject und Backpressure** aufgebaut und im Lasttest verifiziert; wirksam wird die Skalierung mit dem Produktiv-Pool.
 
 ## Betrachtete Alternativen
 
 | Alternative | Warum verworfen |
 |---|---|
-| Klassischer HPA (CPU/Memory) | Falsches Signal für GPU-Inferenz (s.o.); skaliert zu spät oder gar nicht |
-| Statische Replica-Zahl | GPUs dauerhaft vorgehalten → teuer bei bursty Last; kein Scale-down |
-| Knative/Kserve Autoscaling | Eigener Serving-Stack, schwerer; KEDA ist additiv und schlanker für "reines" Replica-Scaling |
-| Custom Controller | Rad neu erfinden; KEDA-Scaler-Ökosystem deckt Prometheus/Queue/Cron ab |
+| Klassischer HPA (CPU/Memory/GPU-Util) | Falsches Signal für GPU-Inferenz (s.o.); skaliert zu spät oder gar nicht |
+| Statische Replica-Zahl | Einfachste Lösung und für den PoC ausreichend – aber GPUs sind dauerhaft gebunden, keine Umverteilung an Batch-Workloads, kein Puffer für Peaks |
+| Knative/KServe Autoscaling | Eigener Serving-Stack, schwerer; KEDA ist additiv und schlanker |
+| Custom Controller | Rad neu erfinden; KEDA deckt Prometheus/Queue/Cron ab |
 
 ## Konsequenzen
 
 **Positiv**
-- Skalierung am eigentlichen Engpass (Request-Queue) → prognostizierbares Verhalten unter Lastspitzen
-- Scale-to-Zero-Option außerhalb Geschäftszeiten spart signifikant GPU-Stunden bei nur 8h-Nutzungsfenster
-- KEDA additiv, kein Vendor-Lock-in, Standard-Ökosystem
+- Skalierung am eigentlichen Engpass (Request-Queue) → vorhersagbares Verhalten unter Lastspitzen
+- GPU-Pool wird zwischen Live-Serving und Batch-Workloads (Eval, Re-Indexierung) geteilt
+- KEDA additiv, kein Vendor-Lock-in
 
 **Negativ / Risiken**
-- **Kaltstart-Latenz** bleibt physikalisch: neuer vLLM-Pod braucht Minuten (Model-Load) → Mitigation: Warm-Pool (`minReplicaCount ≥ 1`), Node-Pre-Provisioning, Threshold konservativ setzen (skaliert früh)
-- Queue-basiertes Scaling erfordert Backpressure-Design am Gateway (Request-Timeout + Queue-Limit + saubere 429/Retry-Antworten)
-- Zwei Skalierungsebenen (Pod via KEDA, Node via Autoscaler) müssen aufeinander abgestimmt werden → Lasttest vor Rollout (Phase 3)
+- **Kaltstart-Latenz** bleibt physikalisch (Minuten) → Warm-Pool über `minReplicaCount`, Threshold konservativ (skaliert früh), Cron-Vorwärmen
+- Skalierung endet an der Pool-Grenze → Backpressure-Design am Gateway ist Pflicht
+- Schwellwerte (Queue-Länge pro Replica) nur per Lasttest bestimmbar (Phase 3)

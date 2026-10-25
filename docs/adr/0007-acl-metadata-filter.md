@@ -1,9 +1,8 @@
 # ADR-0007: Dokumentberechtigungen – Metadaten-Filter beim Retrieval
 
-- **Status:** accepted
-- **Datum:** 2026-10-24
+- **Status:** proposed
+- **Datum:** 2026-10-25
 - **Abhängig von:** ADR-0006 (Qdrant), ADR-0005 (Entra ID Auth)
-- **Risiko-Adresse:** Prompt-Cache-Leakage personenbezogener Daten
 
 ## Kontext
 
@@ -13,28 +12,34 @@ Dokumente haben unterschiedliche Berechtigungsstufen. Der Bot darf Inhalte nur a
 
 **Document-Level Security via Payload-Metadaten in Qdrant:**
 
-- Bei der Ingestion speichert jeder Chunk `acl_groups: [AD-Gruppen/Entra-IDs]` + `sensitivity` als Payload
-- Zur Query-Zeit werden die AD-Gruppen des Nutzers (aus dem OIDC-Token) als **serverseitiger Qdrant-Filter** gesetzt – unberechtigte Chunks verlassen die Vektor-DB gar nicht erst
-- Citations in der Antwort verweisen auf Dokumente, die der Nutzer öffnen darf
+- **Ingestion:** Jeder Chunk erhält `acl_groups: [Entra-Group-Object-IDs]` + `sensitivity` aus den ACLs des Quelldokuments
+- **Query-Zeit:** Die Gruppen des Nutzers (Token bzw. Graph bei Overage, ADR-0005) werden als **serverseitiger Qdrant-Filter** gesetzt – unberechtigte Chunks verlassen die Vektor-DB nicht
+- Citations verweisen nur auf Dokumente, die der Nutzer öffnen darf
 
-Ergänzende Maßnahmen gegen den Prompt-Cache-Leakage-Pfad:
-- Response-/Prompt-Caching am Gateway mit **user-scoped Cache-Keys** oder deaktiviert für ACL-gefilterte Anfragen (ADR-0002)
-- Kein Sharing von LLM-Kontext-Chunks zwischen Sessions unterschiedlicher Nutzer
+**Vereinfachung: kein Gruppen-Mitgliedschafts-Sync.** Weil Chunks Gruppen-*IDs* speichern und die Mitgliedschaft des Users zur Query-Zeit aus Entra kommt, wirken Änderungen an Gruppenmitgliedschaften sofort (spätestens nach Token-/Cache-Ablauf). Synchronisiert werden müssen nur die **Dokument-ACLs** (welche Gruppe darf welches Dokument sehen).
+
+**Woher kommen die Dokument-ACLs?**
+- v1 (PoC-Daten): Tarif-, Mantel-, Arbeitszeit- und Reisekostenregelungen sind für **alle Mitarbeitenden** freigegeben → eine Gruppe „alle MA“. Der Mechanismus ist trotzdem vollständig gebaut und getestet.
+- Später (SharePoint/Confluence): ACLs werden vom Konnektor aus dem Quellsystem gelesen und auf Entra-Group-IDs gemappt.
+
+**Kein Response-Caching** in v1 (ADR-0002) – damit entfällt der Cache-Leakage-Pfad vollständig. Kein Sharing von Kontext-Chunks zwischen Sessions.
 
 ## Betrachtete Alternativen
 
 | Alternative | Warum verworfen |
 |---|---|
-| Separate Collections pro Bereich | Keine bereichsübergreifende Suche möglich; Rechte-Änderung = Re-Indexing; Collection-Explosion |
-| Post-Retrieval-Check | Treffer werden erst nach dem Retrieval geprüft → Top-k kann mit unberechtigten Treffern "verstopft" sein; Info-Leak über Ranking möglich |
-| Zugriffskontrolle nur im Prompt ("sag nichts über X") | Kein echtes Access Control – Prompt-Injection umgehbar |
+| Separate Collections pro Bereich | Keine bereichsübergreifende Suche; Rechte-Änderung = Re-Indexing; Collection-Explosion |
+| Post-Retrieval-Check | Top-k kann mit unberechtigten Treffern "verstopft" sein; Info-Leak über Ranking möglich |
+| Zugriffskontrolle nur im Prompt ("sag nichts über X") | Kein echtes Access Control – per Prompt-Injection umgehbar |
+| Sync der Gruppenmitgliedschaften in die Ingestion | Unnötig bei ID-basierten ACLs; erzeugt Sync-Lag bei Rechte-Entzug |
 
 ## Konsequenzen
 
 **Pflichten**
-- **AD/Entra-Gruppen-Sync in die Ingestion-Pipeline** (Quelle der Wahrheit: AD + Dokumenten-ACLs). Rechte-Änderungen am Dokument müssen den Index aktualisieren (Inkrement-Sync) → RTO für Rechte-Entzug definieren (z.B. < 15 min)
-- Filter-Evaluation ist Teil jeder Query → Payload-Index auf `acl_groups` pflegen
+- Inkrementeller Sync der **Dokument-ACLs** → max. Latenz für Rechte-Entzug am Dokument als SLO (z.B. < 15 min)
+- Payload-Index auf `acl_groups`
 - Audit-Log: welcher Nutzer bekam welche Chunks als Kontext (ADR-0011)
+- **Deterministische ACL-Tests** in CI: Testnutzer ohne Berechtigung darf definierte Chunks nie erhalten (ADR-0012)
 
 **Restrisiko**
-- Rechte-Drift: Quellsystem-ACLs und Index-ACLs divergieren bei Sync-Lag → Monitoring + max. Sync-Latenz als Betriebs-SLO
+- Rechte-Drift: Quellsystem-ACLs und Index divergieren bei Sync-Lag → Monitoring der Sync-Latenz

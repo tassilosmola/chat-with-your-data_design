@@ -1,7 +1,7 @@
 # ADR-0009: Embedding-Strategie – self-hosted multilingual, via Gateway
 
-- **Status:** accepted
-- **Datum:** 2026-10-24
+- **Status:** proposed
+- **Datum:** 2026-10-25
 - **Abhängig von:** ADR-0001 (OnPrem), ADR-0002 (Gateway), ADR-0006 (Qdrant)
 
 ## Kontext
@@ -13,18 +13,19 @@ Unternehmensdokumente sind überwiegend deutsch/teils englisch → multilingual 
 **Self-hosted multilingual Embedding-Modell** (Kandidaten: `BAAI/bge-m3`, `intfloat/multilingual-e5-large`) als eigener Inferenz-Service, **hinter demselben LLM-Gateway** wie das Chat-Modell:
 
 - Einheitliche OpenAI-kompatible `/embeddings`-Schnittstelle
-- Provider/Modell konfigurativ wechselbar → konsistente Architektur (ADR-0002)
-- bge-m3 unterstützt zusätzlich sparse Vektoren → optionaler Hybrid-Search-Pfad in Qdrant ohne neue Infrastruktur
+- Modell konfigurativ wechselbar (ADR-0002)
+- bge-m3 liefert zusätzlich Sparse-Vektoren → Hybrid-Search in Qdrant ohne neue Infrastruktur (ADR-0006)
 
 ## Betrachtete Alternativen
 
 | Alternative | Warum verworfen |
 |---|---|
 | OpenAI/Azure Embedding-API | Dokumentinhalte verlassen das Haus → widerspricht ADR-0001/Datenschutz |
-| Direkt in Ingestion-Pipeline eingebunden (kein Service) | Query-Embedding zur Laufzeit braucht sowieso einen Service → besser einmalig hinter Gateway |
+| Direkt in Ingestion-Pipeline eingebunden (kein Service) | Query-Embedding zur Laufzeit braucht sowieso einen Service → einmalig hinter Gateway |
 
 ## Konsequenzen
 
-- **Index-Versionierung Pflicht:** Embedding-Modellwechsel = Vektordimension/Semantik ändert sich → neue Qdrant-Collection + Re-Indexierung, alte Version parallel für A/B und Rollback
-- Eval-Pipeline (ADR-0012) sollte Embedding-Qualität auf deutschen Fachtexten messen, nicht nur Chat-LLM
-- GPU-Bedarf für Embedding-Service ist klein (CPU möglich, GPU empfohlen für Ingestion-Durchsatz)
+- **Index-Versionierung Pflicht:** Embedding-Modellwechsel = neue Qdrant-Collection + Re-Indexierung, alte Version parallel für A/B und Rollback (ADR-0013)
+- Eval (ADR-0012) misst Retrieval-Qualität (Context-Recall) auf deutschen Fachtexten, nicht nur das Chat-LLM
+- GPU-Bedarf klein (CPU möglich, GPU empfohlen für Ingestion-Durchsatz)
+- Ingestion-Batches laufen über ein eigenes Gateway-Kontingent, damit sie Live-Queries nicht verdrängen

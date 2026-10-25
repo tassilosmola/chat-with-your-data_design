@@ -1,8 +1,8 @@
 # ADR-0012: Evaluationsstrategie – Golden Dataset + CI-Evals + Feedback-Loop
 
-- **Status:** accepted
-- **Datum:** 2026-10-24
-- **Zusammenhang:** ADR-0010 (Citations → Groundedness-Messung), ADR-0011 (Scores an Traces)
+- **Status:** proposed
+- **Datum:** 2026-10-25
+- **Zusammenhang:** ADR-0010 (Citations → Groundedness-Messung), ADR-0011 (Langfuse Datasets/Scores)
 
 ## Kontext
 
@@ -10,27 +10,34 @@ Zwei Qualitätsdimensionen müssen kontinuierlich gesichert werden: **Antwortqua
 
 ## Entscheidung
 
-**Zweigleisig:**
+**Dreigleisig – deterministisch, LLM-basiert, real-world:**
 
-1. **Golden Dataset + CI-Evals (Prävention)**
-   - Kuratiertes Set von ~50–100 Fragen mit Referenzantworten und erwarteten Quellen, aus echten Fachfragen
-   - Automatisierte Evals (z.B. Ragas/DeepEval) in der Pipeline: Metriken = Context-Recall, Faithfulness/Groundedness, Answer-Relevance, ACL-Filter-Korrektheit
-   - Eval-Gate vor jedem Release/Index-Rebuild: Scores dürfen nicht unter Baseline fallen
+1. **Deterministische Tests (CI, jeder Build)**
+   - **ACL-Korrektheit:** Testnutzer mit/ohne Gruppen → definierte Chunks dürfen nie bzw. müssen zurückkommen. Sicherheitseigenschaft = harter Test, keine LLM-Metrik.
+   - Citation-Check (ADR-0010), "Keine Quelle"-Verhalten bei Fragen außerhalb des Corpus
+   - Ingestion-Checks: Parse-Erfolg, Tabellen erkannt, Chunk-Längenverteilung, Duplikate
 
-2. **User-Feedback-Loop (Real-World)**
+2. **Golden Dataset + LLM-Evals (vor Release/Index-Rebuild)**
+   - Kuratiertes Set von ~50–100 Fragen mit Referenzantworten und erwarteten Quellen, gemeinsam mit HR erstellt (ADR-0015)
+   - Metriken via Ragas: Context-Recall, Faithfulness/Groundedness, Answer-Relevance
+   - Dataset und Scores liegen in **Langfuse Datasets** (ADR-0011); Ergebnis ist an Modell-/Prompt-/Index-Version geknüpft (ADR-0013)
+   - Eval-Gate: Scores dürfen nicht unter Baseline fallen
+
+3. **User-Feedback-Loop (Real-World)**
    - Thumbs up/down + optionaler Kommentar über `POST /feedback` (ADR-0005)
-   - Negative Feedbacks landen als Kandidaten im Golden Dataset → Dataset wächst mit Realnutzung
+   - Negative Feedbacks werden gesichtet und landen als Kandidaten im Golden Dataset
 
 ## Betrachtete Alternativen
 
 | Alternative | Warum verworfen |
 |---|---|
-| Nur Feedback-Loop | Reaktiv – Regressionen fallen erst bei Nutzern auf, nicht vor dem Release |
-| Nur CI-Evals | Golden Dataset deckt nicht ab, was Nutzer wirklich fragen; ohne Feedback bleibt es statisch |
-| Manuelle Stichproben durch Fachbereich | Skaliert nicht auf 10k MA; gut als Ergänzung zum Aufbau des Golden Datasets, nicht als einzige Maßnahme |
+| Nur Feedback-Loop | Reaktiv – Regressionen fallen erst bei Nutzern auf |
+| Nur LLM-Evals | Sicherheitseigenschaften (ACL) dürfen nicht von einem probabilistischen Judge abhängen |
+| Manuelle Stichproben durch Fachbereich | Skaliert nicht; gut zum Aufbau des Golden Datasets |
+| MLflow für Eval-Tracking | Zweites Werkzeug neben Langfuse ohne Mehrwert (ADR-0013) |
 
 ## Konsequenzen
 
-- Aufbau des Golden Datasets ist **Arbeitspaket mit Fachbereichen** (nicht rein technisch) → früh einplanen
-- CI-Evals brauchen GPU-Zeit (Eval-LLM-Calls) → in Pipeline-Budget einrechnen; Eval-LLM kann kleineres Modell sein
-- Datenqualität: Ingestion-Pipeline bekommt eigene Checks (Parse-Erfolg, Chunk-Verteilung, Duplikate) – Qualitätsprobleme werden dort gefangen, nicht erst in der Antwort
+- Aufbau des Golden Datasets ist **Arbeitspaket mit dem Fachbereich** (nicht rein technisch) → früh einplanen
+- LLM-as-Judge braucht GPU-Zeit; Judge-Modell sollte **nicht schwächer** als das Antwortmodell sein (sonst unzuverlässige Scores) → Eval-Läufe außerhalb der Geschäftszeiten auf dem Produktionsmodell
+- Qualitätsprobleme der Daten werden in der Ingestion gefangen, nicht erst in der Antwort

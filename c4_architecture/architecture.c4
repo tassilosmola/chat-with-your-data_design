@@ -5,10 +5,12 @@
 //   L2  l2_overview      – reduzierte Sicht: nur Live-Request-Pfad (Default-Zoom)
 //   L2  l2_container     – alle Container, gruppiert nach Funktionsbereichen
 //   L2  l2_llm_abstraktion – gezielte Sicht auf das LLM-Gateway (Serving + Ingestion)
+//   L2  l2_roadmap_v2    – v1-Architektur + v2-Erweiterung (MCP-Tools)
 //   L3  l3_api / l3_ingest / l3_gateway / l3_qdrant – Komponenten-Ebene
 //   L4  l4_deployment / l4_scaling – Deployment (K8s, KEDA, GPU-Nodes)
 //   Flow flow_rag_ingestion / flow_rag_serving – nummerierte Ablauf-Diagramme
 // Im LikeC4-Viewer: Elemente mit eigenen Scoped Views sind anklickbar → Zoom.
+// Elemente mit Tag #v2 sind Roadmap (gestrichelt, transparent) – nicht Teil von v1.
 // ============================================================================
 
 specification {
@@ -48,12 +50,6 @@ specification {
       color sky
     }
   }
-  element storage {
-    style {
-      shape cylinder
-      color slate
-    }
-  }
 
   // --------------------------------------------------------------------------
   // Beziehungs-Arten (Styling)
@@ -68,10 +64,10 @@ specification {
     line dashed
     color amber
   }
-  relationship syncs {
-    title 'synchronisiert'
-    line dotted
-    color indigo
+  relationship planned {
+    title 'v2 (Roadmap)'
+    line dashed
+    color gray
   }
 
   // --------------------------------------------------------------------------
@@ -82,6 +78,9 @@ specification {
   }
   tag pii {
     color red
+  }
+  tag v2 {
+    color gray
   }
 
   // --------------------------------------------------------------------------
@@ -115,7 +114,7 @@ specification {
       color amber
     }
   }
-  deploymentNode vm {
+  deploymentNode platform {
     style {
       color slate
     }
@@ -131,20 +130,28 @@ model {
   // Externe Akteure & Systeme (L1)
   // --------------------------------------------------------------------------
   person ma 'Mitarbeitende' {
-    description '~10.000 Mitarbeitende als Zielgruppe (ADR: ~2–5 % concurrent)'
+    description '~10.000 Mitarbeitende als Zielgruppe (~2–5 % concurrent, ADR-0003)'
   }
 
   externalSystem entra 'Entra ID / AD' {
-    description 'OIDC-Tokens + AD-Gruppen: AuthN und ACL-Filterquelle (ADR-0005, -0007)'
+    description 'OIDC-Tokens + Gruppen-IDs; Graph bei Group-Overage (ADR-0005, -0007)'
   }
   externalSystem docsrc 'Dokumentenquellen' {
-    description 'PDF/Dokumente – PoC-Daten: rag-resources/ (ADR-0004)'
+    description 'v1: HR-Regelungen als PDF (rag-resources/) – Tarif, Mantel, Arbeitszeit, Reisekosten (ADR-0004, -0015)'
   }
   externalSystem fachdb 'Fachdatenbanken' {
-    description 'Strukturierte Daten, read-only Zugriff + Row-Level-Security (ADR-0008)'
+    #v2
+    description 'v2: strukturierte Daten, read-only + Row-Level-Security (ADR-0008)'
+    style {
+      border dashed
+      opacity 40%
+    }
   }
-  externalSystem modellquelle 'Modellquelle' {
-    description 'HuggingFace-Revisions / interner Mirror für Modellgewichte (ADR-0013)'
+  externalSystem modellquelle 'Modell-Mirror' {
+    description 'Interner Mirror für Open-Weight-Modelle, gepinnte HF-Revisionen (ADR-0013)'
+  }
+  externalSystem monitoring 'Plattform-Monitoring' {
+    description 'Bestehendes Prometheus/Grafana/OTel – wiederverwendet (ADR-0011); Metrikquelle für KEDA (ADR-0014)'
   }
 
   // --------------------------------------------------------------------------
@@ -153,8 +160,8 @@ model {
   system cwyd 'Chat with your Data' {
     description '''
       OnPrem RAG-Chatbot auf Kubernetes (ADR-0001).
-      Zwei Datenpfade: Dokumente via RAG (Qdrant), strukturierte Daten via MCP-Tools.
-      Chat-LLM + Embeddings hinter LiteLLM-Gateway – austauschbar (ADR-0002).
+      v1: HR-Self-Service über Dokumente (RAG, Qdrant) mit Citations-Pflicht.
+      v2: strukturierte Daten über MCP-Tools (ADR-0008).
     '''
     technology 'Kubernetes, onPrem'
 
@@ -163,114 +170,125 @@ model {
       technology 'PoC-Frontend; später Teams etc.'
       description 'API-first: jeder Client konsumiert /chat + /feedback (ADR-0005)'
     }
-    container ingress 'Ingress / API-GW' {
-      technology 'K8s Ingress'
-      description 'TLS-Terminierung, OIDC-Validierung gegen Entra ID'
+    container ingress 'Ingress' {
+      technology 'K8s Ingress (Plattform)'
+      description 'TLS-Terminierung; Auth erfolgt in der Chat-API (ADR-0005)'
     }
 
     // --- Chat Backend ---
-    container api 'Chat API + Agent' {
-      technology 'FastAPI, LangChain'
-      description 'Orchestriert RAG-Pfad + Tool-Calls; Antworten immer mit Citations'
+    container api 'Chat API' {
+      technology 'FastAPI, OpenAI-SDK, qdrant-client'
+      description 'Feste RAG-Pipeline (Rewrite → Retrieval → Generation); Antworten immer mit Citations (ADR-0004, -0010)'
 
       component authmw 'Auth-Middleware' {
         technology 'OIDC/JWT'
-        description 'Extrahiert User-Identität + AD-Gruppen aus dem Token'
+        description 'Validiert Token; User-ID + Gruppen-IDs, Graph-Lookup bei Overage (ADR-0005)'
       }
-      component agent 'Orchestrator / Agent' {
-        technology 'LangChain'
-        description 'Entscheidet pro Anfrage: RAG-Pfad, Tool-Calls via MCP, oder beides'
+      component pipeline 'RAG-Pipeline' {
+        description 'Query-Rewriting mit Historie → Retrieval → Generation; deterministischer Ablauf, kein Agent (ADR-0004)'
       }
       component retrieval 'Retrieval-Client' {
-        description 'Query + User-Gruppen → serverseitiger ACL-Filter in Qdrant (ADR-0007)'
-      }
-      component toolclient 'Tool-Client' {
-        technology 'MCP'
-        description 'Function-Calling gegen kuratierte, read-only Tools'
+        description 'Hybrid-Query + User-Gruppen → serverseitiger ACL-Filter; Mindest-Score → "keine Quelle" (ADR-0007, -0010)'
       }
       component citations 'Citation-Assembler' {
-        description 'Reichert Antwort um Quellen an: doc_id, Seite, Tool-Name (ADR-0010)'
+        description 'Quellen anreichern (doc_id, Seite) + Check: nur Chunks aus dem Kontext (ADR-0010)'
       }
       component feedback 'Feedback-API' {
-        description 'Thumbs/Kommentare → werden Eval-Cases im Golden Dataset (ADR-0012)'
+        description 'Thumbs/Kommentare → Kandidaten für Golden Dataset (ADR-0012)'
+      }
+      component toolclient 'Tool-Client (v2)' {
+        #v2
+        technology 'MCP, Function-Calling'
+        description 'v2: kuratierte read-only Tools, User-Token per On-Behalf-Of (ADR-0008)'
+        style {
+          border dashed
+          opacity 40%
+        }
       }
 
-      authmw -> agent 'User + Gruppen'
-      agent -> retrieval 'RAG-Pfad'
-      agent -> toolclient 'Tool-Aufrufe'
-      agent -> citations 'Antwort + Kontext'
+      authmw -> pipeline 'User + Gruppen'
+      pipeline -> retrieval 'Suchanfrage'
+      pipeline -> citations 'Antwort + Kontext'
       authmw -> feedback 'User-Feedback'
+      pipeline -[planned]-> toolclient 'Tool-Aufrufe (v2)'
     }
 
     container gateway 'LLM-Gateway' {
       technology 'LiteLLM Proxy'
-      description 'Einheitliche Schnittstelle für Chat-LLM + Embeddings; Modellwechsel konfigurativ (ADR-0002)'
+      description 'Quotas pro User, Backpressure, Routing für Chat-LLM + Embeddings; kein Response-Cache (ADR-0002)'
 
+      component ratelimit 'Quotas / Backpressure' {
+        description 'Rate-Limits pro User; Queue-Limit + 429/Retry-After (Voraussetzung für ADR-0014)'
+      }
       component router 'Provider-Router' {
-        description 'Primär self-hosted vLLM; Fallback/Wechsel rein konfigurativ'
-      }
-      component ratelimit 'Rate-Limit / Backpressure' {
-        description 'Queue-Limit + saubere 429-Antworten – Voraussetzung für Queue-basiertes KEDA-Scaling (ADR-0014)'
-      }
-      component cache 'Response-Cache' {
-        #pii
-        description 'User-scoped Cache-Keys – Schutz gegen Leakage personenbezogener Daten'
+        description 'Modell-Endpunkte per Config (gepinnte Revision, ADR-0013)'
       }
       component tracing 'Trace-Exporter' {
-        technology 'Langfuse SDK / OTel'
+        technology 'Langfuse SDK'
       }
+
+      ratelimit -> router 'zugelassene Requests'
     }
 
     container llm 'LLM Serving' {
       #gpu
       technology 'vLLM · ~70B Q4 (Sizing offen, ADR-0003)'
-      description 'Continuous Batching; exportiert Prometheus-Metrik num_requests_waiting'
+      description 'Continuous Batching + Prefix-Caching; exportiert num_requests_waiting'
     }
     container emb 'Embedding-Service' {
-      technology 'bge-m3 multilingual, self-hosted'
+      technology 'bge-m3 multilingual (dense + sparse)'
       description 'Query- + Ingest-Embeddings hinter demselben Gateway (ADR-0009)'
     }
 
     // --- Retrieval & Daten ---
     database qdrant 'Qdrant' {
       technology 'Vektor-DB, self-hosted (ADR-0006)'
-      description 'Vektoren + Payload-Metadaten; versionierte Collections'
+      description 'Hybrid-Search + ACL-Payload-Filter; versionierte Collections'
 
-      component collections 'Collections rag_vN' {
-        description 'Index-Versionierung: Rebuild = neue Collection, alte bleibt für Rollback/A-B (ADR-0013)'
+      component collections 'Collections rag_vN + Alias' {
+        description 'Rebuild = neue Collection; Alias rag_current → Rollback in Sekunden (ADR-0013)'
       }
       component aclindex 'Payload-Index acl_groups' {
-        description 'serverseitiger ACL-Filter pro Query – unberechtigte Chunks verlassen die DB nicht'
+        description 'serverseitiger ACL-Filter pro Query – unberechtigte Chunks verlassen die DB nicht (ADR-0007)'
       }
     }
-    container mcp 'MCP-Server' {
-      technology 'kuratierte read-only Tools'
-      description 'Governance per Tool-Definition statt freiem Text-to-SQL (ADR-0008)'
+    database postgres 'Postgres' {
+      #pii
+      technology 'Plattform-Postgres oder eigene Instanz'
+      description 'Chat-Verläufe, Feedback (Retention!), Ingestion-Manifest (ADR-0005, -0013)'
+    }
+    container mcp 'MCP-Server (v2)' {
+      #v2
+      technology 'kuratierte read-only Tools je Fachdomäne'
+      description 'v2: Governance per Tool-Definition statt Text-to-SQL; läuft im Nutzerkontext (ADR-0008)'
+      style {
+        border dashed
+        opacity 40%
+      }
     }
 
     // --- Ingestion ---
     container ingest 'Ingestion-Pipeline' {
-      technology 'Batch/CronJob + Worker'
-      description 'Dokumente → Chunks → Embeddings → Qdrant; Artefakte DVC-versioniert'
+      technology 'CronJob + Worker'
+      description 'Dokumente → Chunks → Embeddings → Qdrant; inkrementell über Content-Hash-Manifest (ADR-0004, -0013)'
 
       component conn 'Konnektoren' {
-        description 'PDF/Dokumente; erweiterbar auf SharePoint/Confluence'
+        description 'v1: PDF; erweiterbar auf SharePoint/Confluence (Roadmap)'
       }
       component parser 'Parser' {
-        description 'Text-Extraktion, Struktur-Erkennung'
+        description 'Text- und Tabellen-Extraktion, Struktur (Paragraphen, Seiten)'
       }
       component chunker 'Chunker' {
-        description 'Chunking-Strategie + Parameter DVC-versioniert (ADR-0013)'
+        description 'Struktur-basiertes Chunking; Parameter in Config versioniert'
       }
       component aclenrich 'ACL-Enrichment' {
-        #pii
-        description 'Dokument-ACLs (AD-Gruppen) → acl_groups Payload-Metadaten'
+        description 'Dokument-ACLs → acl_groups (Entra-Group-IDs); v1: "alle MA" (ADR-0007)'
       }
       component embedder 'Embed-Client' {
-        description 'ruft Embedding-Service via LLM-Gateway'
+        description 'ruft Embedding-Service via LLM-Gateway (eigenes Kontingent)'
       }
       component writer 'Index-Writer' {
-        description 'schreibt Chunks + Metadaten in versionierte Collection'
+        description 'Upsert/Delete in versionierter Collection + Manifest-Eintrag'
       }
 
       conn -> parser
@@ -284,31 +302,11 @@ model {
     container langfuse 'Langfuse' {
       #pii
       technology 'self-hosted (ADR-0011)'
-      description 'LLM-Traces: Prompt, Retrieval, Antwort, Kosten – Zugriff + Retention geregelt'
-    }
-    container mon 'OTel + Grafana' {
-      technology 'OpenTelemetry, Prometheus'
-      description 'Infra-Metriken: Latenz, Fehler, GPU-Auslastung'
+      description 'Traces mit Modell-/Prompt-/Index-Version; Prompt-Versionen, Datasets, Eval-Scores – Zugriff + Retention geregelt'
     }
     container evalp 'Eval-Pipeline' {
-      technology 'Golden Dataset, Ragas/DeepEval (ADR-0012)'
-      description 'CI-Gate vor Release/Index-Rebuild; Feedback-Loop speist Dataset'
-    }
-
-    // --- Versionierung ---
-    container mlflow 'MLflow' {
-      technology 'Registry + Tracking, self-hosted'
-      description 'Modell-Revisionen staging→prod; Eval-Runs verknüpft mit Daten-/Modellversion (ADR-0013)'
-    }
-    storage dvc 'DVC Remote' {
-      technology 'S3/MinIO'
-      description 'Corpus-Snapshots + Pipeline-Artefakte, content-addressed (ADR-0013)'
-    }
-
-    // --- Skalierung ---
-    container keda 'KEDA Scaler' {
-      technology 'ScaledObject, Prometheus-Scaler'
-      description 'Queue-Länge (vllm:num_requests_waiting) → LLM-Replicas; Cron-Trigger für Scale-to-Zero (ADR-0014)'
+      technology 'CI-Job · Ragas + deterministische Tests (ADR-0012)'
+      description 'ACL-Tests, Citation-Check, Golden Dataset; Gate vor Release/Index-Rebuild'
     }
   }
 
@@ -318,38 +316,44 @@ model {
   ma -> cwyd.webui 'chattet'
   cwyd.webui -> cwyd.ingress 'HTTPS'
   cwyd.ingress -> cwyd.api 'JWT'
-  cwyd.ingress -> entra 'OIDC-Validierung, Gruppen'
-  cwyd.ingest -> entra 'AD-Gruppen-Sync'
+  cwyd.api.authmw -> entra 'JWKS, Graph bei Overage'
 
   // --------------------------------------------------------------------------
   // Beziehungen: Request-Pfad
   // --------------------------------------------------------------------------
-  cwyd.api -> cwyd.qdrant 'Query + ACL-Filter'
-  cwyd.api -> cwyd.mcp 'Tool-Calls'
-  cwyd.api -> cwyd.gateway 'chat + embeddings'
+  cwyd.api.retrieval -> cwyd.qdrant 'Hybrid-Query + ACL-Filter'
+  cwyd.api.pipeline -> cwyd.gateway 'Rewrite + Generation'
+  cwyd.api.retrieval -> cwyd.gateway 'Query-Embedding'
+  cwyd.api -> cwyd.postgres 'Verlauf + Feedback'
   cwyd.gateway -> cwyd.llm 'Inferenz'
   cwyd.gateway -> cwyd.emb 'Embeddings'
-  cwyd.mcp -> fachdb 'read-only Queries'
+  modellquelle -> cwyd.llm 'Gewichte (gepinnte Revision)'
+  modellquelle -> cwyd.emb 'Gewichte (gepinnte Revision)'
+
+  // --------------------------------------------------------------------------
+  // Beziehungen: v2 (Roadmap)
+  // --------------------------------------------------------------------------
+  cwyd.api.toolclient -[planned]-> cwyd.mcp 'Tool-Calls + OBO-Token'
+  cwyd.mcp -[planned]-> fachdb 'read-only Queries (RLS)'
 
   // --------------------------------------------------------------------------
   // Beziehungen: Ingestion-Pfad
   // --------------------------------------------------------------------------
-  cwyd.ingest -> docsrc 'liest Dokumente'
+  cwyd.ingest -> docsrc 'liest Dokumente + ACLs'
   cwyd.ingest -> cwyd.gateway 'embeddings'
   cwyd.ingest -> cwyd.qdrant 'Chunks + acl_groups'
-  cwyd.ingest -[syncs]-> cwyd.dvc 'versionierte Artefakte'
+  cwyd.ingest -> cwyd.postgres 'Manifest (Content-Hash)'
 
   // --------------------------------------------------------------------------
-  // Beziehungen: Qualität, Versionierung, Skalierung
+  // Beziehungen: Qualität & Skalierungssignal
   // --------------------------------------------------------------------------
   cwyd.api -[telemetry]-> cwyd.langfuse 'Traces'
-  cwyd.api -[telemetry]-> cwyd.mon 'Metriken'
-  cwyd.gateway -[telemetry]-> cwyd.langfuse 'LLM-Requests'
+  cwyd.gateway.tracing -[telemetry]-> cwyd.langfuse 'LLM-Requests'
+  cwyd.api -[telemetry]-> monitoring 'Metriken'
+  cwyd.gateway -[telemetry]-> monitoring 'Queue/Backpressure-Metriken'
+  cwyd.llm -[telemetry]-> monitoring 'num_requests_waiting'
   cwyd.evalp -> cwyd.api 'Eval/CI-Gate'
-  cwyd.evalp -> cwyd.mlflow 'Eval-Runs'
-  modellquelle -> cwyd.mlflow 'Gewichte, Revisionen'
-  cwyd.mlflow -> cwyd.gateway 'Modell-Config staging→prod'
-  cwyd.keda -[scales]-> cwyd.llm 'Queue-Länge → Replicas'
+  cwyd.evalp -> cwyd.langfuse 'Datasets + Scores'
 }
 
 // ============================================================================
@@ -364,36 +368,41 @@ deployment {
       nodepool cpuPool 'CPU Nodepool' {
         webuiPod = instanceOf cwyd.webui
         ingressPod = instanceOf cwyd.ingress {
-          description 'Ingress-Controller + TLS'
+          description 'Ingress-Controller (Plattform) + TLS'
         }
         apiPod = instanceOf cwyd.api {
-          description 'HPA/KEDA: 2–10 Replicas'
+          description 'HPA: 2–10 Replicas, stateless'
           style { multiple true }
         }
         gwPod = instanceOf cwyd.gateway {
-          description 'stateless; Queue-Backpressure vor LLM'
+          description 'stateless, ≥2 Replicas; Queue-Backpressure vor LLM'
         }
         qdrantPod = instanceOf cwyd.qdrant {
           description 'StatefulSet + PVC + Snapshot-Backup'
         }
-        mcpPod = instanceOf cwyd.mcp
-        ingestPod = instanceOf cwyd.ingest {
-          description 'CronJob + Worker (skaliert auf Queue-Tiefe)'
+        pgPod = instanceOf cwyd.postgres {
+          description 'Plattform-Postgres (geteilt mit Langfuse möglich)'
         }
-        lfPod = instanceOf cwyd.langfuse
-        monPod = instanceOf cwyd.mon
-        evalPod = instanceOf cwyd.evalp
-        mlflowPod = instanceOf cwyd.mlflow
+        ingestPod = instanceOf cwyd.ingest {
+          description 'CronJob + Worker (KEDA auf Queue-Tiefe)'
+        }
+        lfPod = instanceOf cwyd.langfuse {
+          description 'Langfuse v3: Web/Worker + ClickHouse, Redis, S3'
+        }
+        evalPod = instanceOf cwyd.evalp {
+          description 'CI-Job, außerhalb der Geschäftszeiten'
+        }
       }
 
-      gpupool gpuPool 'GPU Nodepool' {
+      gpupool gpuPool 'GPU Nodepool (fest)' {
+        description 'Feste OnPrem-GPU-Kapazität; geteilt zwischen Live-Serving und Batch (Eval, Re-Indexierung)'
         llmPod = instanceOf cwyd.llm {
           #gpu
-          description 'vLLM ~70B Q4, 2×GPU/Pod; Kaltstart = Modell laden → Warm-Pool nötig'
+          description 'vLLM ~70B Q4, 2×GPU/Pod; Kaltstart = Modell laden → Warm-Pool'
           metadata {
-            replicas 'min 1 (Warm-Pool) … n'
+            replicas 'min = Basislast (Warm-Pool) … max = Pool-Kapazität'
             scaler 'KEDA Prometheus-Scaler: vllm:num_requests_waiting'
-            cron 'optional Scale-to-Zero über Nacht'
+            cron 'Nachts auf Minimum → GPUs frei für Eval/Ingestion; morgens vorwärmen'
           }
           style { multiple true }
         }
@@ -403,18 +412,17 @@ deployment {
       }
 
       operator kedaOp 'KEDA Operator' {
-        description 'ScaledObject: Prometheus-Scaler auf Queue-Länge; skaliert Deployments statt CPU-Util'
+        description 'ScaledObject: Prometheus-Scaler auf Queue-Länge + Cron-Trigger; skaliert innerhalb des GPU-Pools'
       }
-      operator ca 'Cluster-Autoscaler' {
-        description 'provisioniert GPU-Nodes, sobald Pods pending hängen'
+
+      platform promStack 'Plattform-Monitoring' {
+        prom = instanceOf monitoring {
+          description 'Prometheus scrapt vLLM- und Gateway-Metriken'
+        }
       }
 
       kedaOp -> gpuPool.llmPod 'skaliert Replicas (Queue-Länge)'
-      ca -> gpuPool 'provisioniert Nodes'
-    }
-
-    vm minio 'Object Storage (MinIO)' {
-      instanceOf cwyd.dvc
+      kedaOp -> promStack.prom 'liest num_requests_waiting'
     }
   }
 }
@@ -429,7 +437,7 @@ views {
     title 'L1 · Systemkontext'
     description '''
       High-Level-Sicht: Akteur, System, externe Abhängigkeiten.
-      Klick auf „Chat with your Data" → Zoom auf L2 (Container).
+      Gestrichelt = Roadmap v2. Klick auf „Chat with your Data" → Zoom auf L2.
     '''
     include *
   }
@@ -437,25 +445,25 @@ views {
   // --- L2a: Überblick – reduziert auf den Live-Request-Pfad --------------------
   // (scoped view of cwyd → Default beim Reinzoomen aus L1, da zuerst definiert)
   view l2_overview of cwyd {
-    title 'L2 · Überblick (Request-Pfad)'
+    title 'L2 · Überblick v1 (Request-Pfad)'
     description '''
-      Nur der Live-Pfad einer Chat-Anfrage: Zugriff → Agent → Retrieval/Tools →
-      LLM. Nebensysteme (Ingestion, Observability, Versionierung, Skalierung)
-      sind in der View „l2_container" gruppiert dargestellt.
+      Nur der Live-Pfad einer Chat-Anfrage in v1: Zugriff → Chat API →
+      Retrieval (Qdrant) → LLM via Gateway. Nebensysteme (Ingestion, Observability)
+      in „l2_container", Erweiterung in „l2_roadmap_v2".
       Klick auf Chat API / Gateway / Qdrant → Zoom auf L3.
     '''
-    include webui, ingress, api, gateway, llm, emb, qdrant, mcp
-    include ma, entra, fachdb
+    include webui, ingress, api, gateway, llm, emb, qdrant, postgres
+    include ma, entra
   }
 
   // --- L2b: Container vollständig, gruppiert nach Funktionsbereich -------------
   view l2_container of cwyd {
-    title 'L2 · Container (vollständig)'
+    title 'L2 · Container v1 (vollständig)'
     description '''
-      Alle Container, gruppiert nach Funktionsbereichen.
+      Alle v1-Container, gruppiert nach Funktionsbereichen.
       Klick auf Chat API / Ingestion / Gateway / Qdrant → Zoom auf L3.
     '''
-    include ma, entra, docsrc, fachdb, modellquelle
+    include ma, entra, docsrc, modellquelle, monitoring
 
     group 'Zugriff' {
       include webui, ingress
@@ -463,38 +471,29 @@ views {
     group 'Chat-Backend' {
       include api, gateway
     }
-    group 'Modell-Serving (GPU)' {
+    group 'Modell-Serving (GPU, KEDA)' {
       color amber
       include llm, emb
     }
-    group 'Retrieval & Daten' {
-      include qdrant, mcp
+    group 'Retrieval & Persistenz' {
+      include qdrant, postgres
     }
     group 'Ingestion (offline)' {
       include ingest
     }
     group 'Observability & Qualität' {
-      include langfuse, mon, evalp
-    }
-    group 'Versionierung' {
-      include mlflow, dvc
-    }
-    group 'Skalierung' {
-      include keda
+      include langfuse, evalp
     }
   }
 
   // --- L2c: LLM-Gateway als Abstraktionsschicht --------------------------------
-  // Gezielte Sicht auf ADR-0002: Serving UND Ingestion über dasselbe Gateway
   view l2_llm_abstraktion of cwyd {
     title 'L2 · LLM-Abstraktionsschicht'
     description '''
       Alle Modellzugriffe laufen über dasselbe LLM-Gateway (ADR-0002) –
-      das Chat-Serving genauso wie die Embeddings der Ingestion (ADR-0009).
-      Modellwechsel ist rein konfigurativ; MLflow steuert Modell-Revisionen
-      staging→prod (ADR-0013). Pflichten am Gateway: Rate-Limit/Backpressure
-      (KEDA-Voraussetzung, ADR-0014), user-scoped Cache (#pii), Tracing
-      nach Langfuse (ADR-0011).
+      Chat-Serving genauso wie die Embeddings der Ingestion (ADR-0009).
+      Aufgaben: Quotas pro User, Backpressure (Voraussetzung für KEDA, ADR-0014),
+      Routing auf gepinnte Modellrevisionen (ADR-0013), Tracing nach Langfuse.
       Klick auf LLM-Gateway → Zoom auf Komponenten.
     '''
     group 'Konsumenten (Serving + Ingestion)' {
@@ -505,15 +504,31 @@ views {
       color amber
       include llm, emb
     }
-    group 'Governance' {
-      include mlflow, langfuse
+    include langfuse
+  }
+
+  // --- L2d: Roadmap v2 – MCP als zusätzlicher Konnektor -------------------------
+  view l2_roadmap_v2 of cwyd {
+    title 'L2 · Roadmap v2 (MCP-Tools)'
+    description '''
+      v1-Kern plus v2-Erweiterung (gestrichelt): strukturierte Daten über
+      kuratierte MCP-Tools je Fachdomäne, im Nutzerkontext (On-Behalf-Of).
+      Additiv: Retrieval wird ein Tool unter mehreren, kein Umbau (ADR-0008, Roadmap).
+    '''
+    include ma, entra, fachdb
+    group 'v1 (bestehend)' {
+      include webui, api, gateway, llm, qdrant
+    }
+    group 'v2 (Roadmap)' {
+      color gray
+      include mcp
     }
   }
 
   // --- L3: Komponenten -------------------------------------------------------
   view l3_api of cwyd.api {
     title 'L3 · Chat API – Komponenten'
-    description 'Auth → Orchestrierung → Retrieval/Tool-Calls → Citations → Feedback'
+    description 'Auth → RAG-Pipeline → Retrieval (ACL) → Citations → Feedback; Tool-Client = v2'
     include *
   }
 
@@ -525,13 +540,13 @@ views {
 
   view l3_gateway of cwyd.gateway {
     title 'L3 · LLM-Gateway – Komponenten'
-    description 'Router, Rate-Limit/Backpressure, user-scoped Cache, Trace-Exporter'
+    description 'Quotas/Backpressure, Router, Trace-Exporter'
     include *
   }
 
   view l3_qdrant of cwyd.qdrant {
     title 'L3 · Qdrant – Interna'
-    description 'Versionierte Collections + ACL-Payload-Index'
+    description 'Versionierte Collections mit Alias + ACL-Payload-Index'
     include *
   }
 
@@ -539,7 +554,7 @@ views {
   deployment view l4_deployment {
     title 'L4 · Deployment – K8s-Cluster (OnPrem)'
     description '''
-      CPU- vs. GPU-Nodepool, Operatoren (KEDA, Cluster-Autoscaler).
+      CPU- vs. GPU-Nodepool, KEDA-Operator, Plattform-Monitoring.
       Klick auf GPU-Nodepool → Zoom auf Skalierungsdetails.
     '''
     include dc.**
@@ -549,15 +564,16 @@ views {
   }
 
   deployment view l4_scaling {
-    title 'L4 · Skalierung im Detail – KEDA → Pods → Nodes'
+    title 'L4 · Skalierung im Detail – Queue-Länge → KEDA → vLLM-Replicas'
     description '''
-      Zwei Ebenen: KEDA skaliert vLLM-Deployments anhand der Request-Queue
-      (Prometheus: num_requests_waiting). Cluster-Autoscaler provisioniert
-      GPU-Nodes bei pending Pods. Kaltstart (Modell laden) → minReplicaCount ≥ 1.
+      Signal ist die Request-Warteschlange (vllm:num_requests_waiting), nicht die
+      GPU-Auslastung. KEDA skaliert vLLM innerhalb des festen GPU-Pools;
+      darüber greift Backpressure (429) am Gateway. Warm-Pool gegen Kaltstart,
+      nachts Minimum → GPUs frei für Eval/Re-Indexierung.
     '''
     includeAncestors: true
     include dc.cluster.kedaOp
-    include dc.cluster.ca
+    include dc.cluster.promStack.prom
     include dc.cluster.gpuPool.llmPod
     include dc.cluster.cpuPool.gwPod
   }
@@ -566,52 +582,50 @@ views {
   dynamic view flow_rag_ingestion {
     title 'Flow · RAG-Ingestion'
     description '''
-      Ein Ingestion-Lauf: Dokumente → Chunks → ACL-Metadaten → Embeddings
-      via LLM-Gateway (ADR-0002, -0009) → versionierte Qdrant-Collection.
-      Die Nummerierung zeigt die Schrittfolge.
+      Ein Ingestion-Lauf: Dokumente + ACLs → Chunks → Embeddings via
+      LLM-Gateway (ADR-0002, -0009) → versionierte Qdrant-Collection + Manifest.
+      Unveränderte Dokumente (gleicher Content-Hash) werden übersprungen.
     '''
 
-    cwyd.ingest.conn -> docsrc 'liest Dokumente'
-    cwyd.ingest.conn -> cwyd.ingest.parser 'Text + Struktur extrahieren'
-    cwyd.ingest.parser -> cwyd.ingest.chunker 'Chunking (Parameter DVC-versioniert, ADR-0013)'
-    cwyd.ingest.aclenrich -> entra 'AD-Gruppen abrufen (Sync, ADR-0007)'
+    cwyd.ingest.conn -> docsrc 'liest Dokumente + ACLs'
+    cwyd.ingest.conn -> cwyd.ingest.parser 'Text, Tabellen, Struktur'
+    cwyd.ingest.parser -> cwyd.ingest.chunker 'Chunking'
     cwyd.ingest.chunker -> cwyd.ingest.aclenrich 'Chunks'
     cwyd.ingest.aclenrich -> cwyd.ingest.embedder 'Chunks + acl_groups'
     cwyd.ingest.embedder -> cwyd.gateway 'Embedding-Requests'
-    cwyd.gateway -> cwyd.emb 'bge-m3 multilingual (ADR-0009)'
+    cwyd.gateway -> cwyd.emb 'bge-m3 dense + sparse (ADR-0009)'
     cwyd.emb -> cwyd.gateway 'Vektoren'
     cwyd.gateway -> cwyd.ingest.embedder 'Vektoren'
     cwyd.ingest.embedder -> cwyd.ingest.writer 'Chunks + Vektoren + Metadaten'
-    cwyd.ingest.writer -> cwyd.qdrant 'Upsert in Collection rag_vN (ADR-0013)'
-    cwyd.ingest.writer -> cwyd.dvc 'Pipeline-Artefakte versionieren (ADR-0013)'
+    cwyd.ingest.writer -> cwyd.qdrant 'Upsert/Delete in rag_vN (ADR-0013)'
+    cwyd.ingest.writer -> cwyd.postgres 'Manifest: doc_id, Hash, Chunk-IDs'
   }
 
   // --- Flow: RAG-Serving / Live-Request (nummerierte Schrittfolge) --------------
   dynamic view flow_rag_serving {
-    title 'Flow · RAG-Serving (Chat-Anfrage)'
+    title 'Flow · RAG-Serving (Chat-Anfrage, v1)'
     description '''
-      Live-Pfad einer Anfrage: Auth → Orchestrierung → Retrieval mit
+      Live-Pfad einer Anfrage: Auth → Query-Rewrite → Retrieval mit
       serverseitigem ACL-Filter (ADR-0007) → Generation via LLM-Gateway
-      (ADR-0002) → Antwort mit Citations-Pflicht (ADR-0010).
-      Die Nummerierung zeigt die Schrittfolge.
+      (ADR-0002) → Antwort mit geprüften Citations (ADR-0010).
     '''
 
     ma -> cwyd.webui 'Chat-Anfrage'
     cwyd.webui -> cwyd.ingress 'HTTPS'
-    cwyd.ingress -> entra 'OIDC-Validierung (ADR-0005)'
     cwyd.ingress -> cwyd.api.authmw 'JWT'
-    cwyd.api.authmw -> cwyd.api.agent 'User + AD-Gruppen'
-    parallel {
-      cwyd.api.agent -> cwyd.qdrant 'Query + serverseitiger ACL-Filter'
-      cwyd.api.agent -> cwyd.mcp 'Tool-Calls (optional, ADR-0008)'
-    }
-    cwyd.api.agent -> cwyd.gateway 'Kontext + Prompt'
+    cwyd.api.authmw -> entra 'Token prüfen (JWKS), ggf. Gruppen via Graph'
+    cwyd.api.authmw -> cwyd.api.pipeline 'User + Gruppen-IDs'
+    cwyd.api.pipeline -> cwyd.gateway 'Query-Rewrite mit Historie'
+    cwyd.api.pipeline -> cwyd.api.retrieval 'eigenständige Suchanfrage'
+    cwyd.api.retrieval -> cwyd.gateway 'Query-Embedding'
+    cwyd.api.retrieval -> cwyd.qdrant 'Hybrid-Query + ACL-Filter'
+    cwyd.api.retrieval -> cwyd.api.pipeline 'berechtigte Chunks (oder "keine Quelle")'
+    cwyd.api.pipeline -> cwyd.gateway 'Kontext + Prompt'
     cwyd.gateway -> cwyd.llm 'Inferenz (vLLM, ADR-0003)'
-    cwyd.llm -> cwyd.gateway 'generierte Antwort'
-    cwyd.gateway -> cwyd.api.agent 'Antwort'
-    cwyd.api.agent -> cwyd.api.citations 'Quellen anreichern (ADR-0010)'
-    cwyd.api.citations -> cwyd.webui 'Antwort + Citations'
+    cwyd.api.pipeline -> cwyd.api.citations 'Antwort + Kontext'
+    cwyd.api.citations -> cwyd.webui 'Antwort + geprüfte Citations'
     cwyd.webui -> ma 'Antwort anzeigen'
-    cwyd.api.agent -> cwyd.langfuse 'Trace (ADR-0011)'
+    cwyd.api.pipeline -> cwyd.postgres 'Verlauf speichern'
+    cwyd.api.pipeline -> cwyd.langfuse 'Trace mit Modell-/Index-Version (ADR-0011)'
   }
 }

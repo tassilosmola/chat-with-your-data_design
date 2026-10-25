@@ -1,7 +1,7 @@
 # ADR-0001: Deployment-Modell – OnPrem auf Kubernetes
 
-- **Status:** accepted
-- **Datum:** 2026-10-24
+- **Status:** proposed
+- **Datum:** 2026-10-25
 - **Kontext:** ~10.000 Mitarbeitende, unternehmenseigene teils personenbezogene Daten, Datenschutz/Compliance als Rahmenbedingung
 
 ## Kontext
@@ -13,9 +13,16 @@ Optionen:
 - **OnPrem (Kubernetes):** Volle Datenhoheit, keine Datenabflüsse, aber GPU-Betrieb und Modell-Hosting in Eigenverantwortung.
 - **Hybrid:** Daten/Embeddings onPrem, nur Prompts zum Cloud-LLM. Kompromiss, aber Personenbezug in Prompts schwer garantiert auszuschließen.
 
+## Annahmen
+
+- Eine **bestehende, betriebene Kubernetes-Plattform** ist vorhanden (Ingress, Monitoring, Secrets, Backup). Ein GPU-Nodepool wird ergänzt.
+- Plattform-Dienste (Ingress-Controller, Prometheus/Grafana, Entra ID) werden **wiederverwendet**, nicht neu aufgebaut.
+
+Trifft die erste Annahme nicht zu, kippt die Abwägung deutlich Richtung Cloud (EU) – das ist bewusst als Entscheidungskriterium festgehalten.
+
 ## Entscheidung
 
-**OnPrem auf Kubernetes.** Alle Komponenten (LLM-Serving, Vektor-DB, Ingestion, Observability) laufen im eigenen Cluster. Bestehende K8s-Infrastruktur wird vorausgesetzt; GPU-Nodes werden als neue Node-Pool-Kategorie ergänzt.
+**OnPrem auf Kubernetes.** Alle Komponenten (LLM-Serving, Vektor-DB, Ingestion, Observability) laufen im eigenen Cluster.
 
 ## Betrachtete Alternativen
 
@@ -29,14 +36,15 @@ Optionen:
 
 **Positiv**
 - Volle Kontrolle über Datenflüsse – kein Drittlandtransfer, keine Vendor-Telemetrie
-- Keine laufenden Token-/API-Kosten → planbare Kosten bei 10k Nutzern
-- Skalierung über K8s (HPA auf GPU-Nodes, Queue-basiertes Scaling für LLM-Requests)
+- Keine nutzungsabhängigen Token-/API-Kosten → Kosten skalieren mit Hardware, nicht mit Nutzung
+- Skalierung über K8s (queue-basiert, ADR-0014)
 
 **Negativ / Risiken**
+- Kosten verschieben sich: **GPU-Investition (CapEx) + Betriebs-FTE** statt Token-Kosten – „günstiger“ ist erst ab hoher Nutzung gegeben
 - GPU-Hardware muss beschafft und betrieben werden (Kapazitätsplanung → ADR-0003)
 - Modell-Qualität liegt in eigener Verantwortung; kein "einfach GPT-4o anbinden"
 - Höherer initialer Betriebsaufwand (Serving-Stack, Monitoring, Updates)
 
 **Mitigation**
-- LLM-Gateway (ADR-0002) hält Tür offen, später cloudbasierte Modelle für unkritische Workloads anzubinden
+- LLM-Gateway (ADR-0002) hält Tür offen, später cloudbasierte Modelle für explizit unkritische Workloads anzubinden
 - PoC-Phase mit kleiner GPU-Ausstattung validieren, dann skalieren
