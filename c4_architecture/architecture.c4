@@ -325,6 +325,7 @@ model {
   cwyd.api.pipeline -> cwyd.gateway 'Rewrite + Generation'
   cwyd.api.retrieval -> cwyd.gateway 'Query-Embedding'
   cwyd.api -> cwyd.postgres 'Verlauf + Feedback'
+  cwyd.api.feedback -> cwyd.postgres 'Feedback'
   cwyd.gateway -> cwyd.llm 'Inferenz'
   cwyd.gateway -> cwyd.emb 'Embeddings'
   modellquelle -> cwyd.llm 'Gewichte (gepinnte Revision)'
@@ -530,6 +531,7 @@ views {
     title 'L3 · Chat API – Komponenten'
     description 'Auth → RAG-Pipeline → Retrieval (ACL) → Citations → Feedback; Tool-Client = v2'
     include *
+    include cwyd.postgres
   }
 
   view l3_ingest of cwyd.ingest {
