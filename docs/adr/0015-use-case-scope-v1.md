@@ -44,3 +44,4 @@ Die Aufgabe fragt nach Priorisierung und spannenden Use Cases. Ohne festen erste
 - Erweiterungen sind **additiv** (neues Tool, neuer Konnektor, Reranker-Stufe), keine Umbauten
 - Fachbereich HR ist Owner für Golden Dataset (ADR-0012) und Content-Qualität
 - Betriebsrat + Datenschutz (ADR-0011) werden **parallel zum PoC** eingebunden, nicht erst vor Rollout
+- Das Review der PoC-Daten zeigt: auch „allgemein freigegebene Regelungen“ enthalten personenbezogene Daten (Kunden, MA-Verhalten) → PII-Sanitizing in der Ingestion als Teil der Ingestion-Pipeline, kein zusätzlicher Baustein (ADR-0016)

@@ -132,6 +132,9 @@ model {
   person ma 'Mitarbeitende' {
     description '~10.000 Mitarbeitende als Zielgruppe (~2–5 % concurrent, ADR-0003)'
   }
+  person hrowner 'HR Content-Owner' {
+    description 'Fachbereich HR: Golden Dataset, PII-Policy/Allowlist, Vier-Augen-Freigabe redigierter Dokumente (ADR-0012, -0016)'
+  }
 
   externalSystem entra 'Entra ID / AD' {
     description 'OIDC-Tokens + Gruppen-IDs; Graph bei Group-Overage (ADR-0005, -0007)'
@@ -196,6 +199,9 @@ model {
       component feedback 'Feedback-API' {
         description 'Thumbs/Kommentare → Kandidaten für Golden Dataset (ADR-0012)'
       }
+      component review 'Redaction-Review' {
+        description 'Admin-Endpunkt nur für Gruppe HR-Content-Owner: bereinigter Text + Findings, Freigabe an sanitized_hash → Manifest (ADR-0016)'
+      }
       component toolclient 'Tool-Client (v2)' {
         #v2
         technology 'MCP, Function-Calling'
@@ -210,6 +216,7 @@ model {
       pipeline -> retrieval 'Suchanfrage'
       pipeline -> citations 'Antwort + Kontext'
       authmw -> feedback 'User-Feedback'
+      authmw -> review 'nur HR-Content-Owner'
       pipeline -[planned]-> toolclient 'Tool-Aufrufe (v2)'
     }
 
@@ -255,7 +262,7 @@ model {
     database postgres 'Postgres' {
       #pii
       technology 'Plattform-Postgres oder eigene Instanz'
-      description 'Chat-Verläufe, Feedback (Retention!), Ingestion-Manifest (ADR-0005, -0013)'
+      description 'Chat-Verläufe, Feedback (Retention!), Ingestion-Manifest mit Lineage + Freigaben, bereinigte Texte (ADR-0005, -0013, -0016)'
     }
     container mcp 'MCP-Server (v2)' {
       #v2
@@ -270,13 +277,21 @@ model {
     // --- Ingestion ---
     container ingest 'Ingestion-Pipeline' {
       technology 'CronJob + Worker'
-      description 'Dokumente → Chunks → Embeddings → Qdrant; inkrementell über Content-Hash-Manifest (ADR-0004, -0013)'
+      description 'Dokumente → PII-Sanitizing → Chunks → Embeddings → Qdrant; inkrementell über Manifest (source_hash + sanitizer_version) (ADR-0004, -0013, -0016)'
 
       component conn 'Konnektoren' {
         description 'v1: PDF; erweiterbar auf SharePoint/Confluence (Roadmap)'
       }
       component parser 'Parser' {
-        description 'Text- und Tabellen-Extraktion, Struktur (Paragraphen, Seiten)'
+        description 'Text- und Tabellen-Extraktion, Struktur (Paragraphen, Seiten); verwirft unsichtbaren Text + Finding (Injection-Schutz, ADR-0016)'
+      }
+      component sanitizer 'PII-Sanitizer' {
+        #pii
+        technology 'Presidio + spaCy de, eigene Recognizer'
+        description 'Redigiert PII zu typisierten Platzhaltern; Funktionsträger-Allowlist (außer mit persönlichen Merkmalen); deterministisch, Policy in Git (ADR-0016)'
+      }
+      component residual 'Residual-Check' {
+        description 'Unabhängiger PII-Zweit-Detektor (Regex + MA-Verzeichnis) + Injection-Checks (Steuerzeichen, KI-Anweisungsmuster); Gate: indexed / needs_review / quarantined (ADR-0010, -0016)'
       }
       component chunker 'Chunker' {
         description 'Struktur-basiertes Chunking; Parameter in Config versioniert'
@@ -288,11 +303,13 @@ model {
         description 'ruft Embedding-Service via LLM-Gateway (eigenes Kontingent)'
       }
       component writer 'Index-Writer' {
-        description 'Upsert/Delete in versionierter Collection + Manifest-Eintrag'
+        description 'Upsert/Delete in versionierter Collection + Manifest-Eintrag (source_hash → sanitized_hash → chunk_hash)'
       }
 
       conn -> parser
-      parser -> chunker
+      parser -> sanitizer
+      sanitizer -> residual
+      residual -> chunker 'nur bereinigt + freigegeben'
       chunker -> aclenrich
       aclenrich -> embedder
       embedder -> writer
@@ -343,7 +360,11 @@ model {
   cwyd.ingest -> docsrc 'liest Dokumente + ACLs'
   cwyd.ingest -> cwyd.gateway 'embeddings'
   cwyd.ingest -> cwyd.qdrant 'Chunks + acl_groups'
-  cwyd.ingest -> cwyd.postgres 'Manifest (Content-Hash)'
+  cwyd.ingest -> cwyd.postgres 'Manifest (Lineage-Hashes, Findings, Status)'
+  cwyd.ingest.residual -> cwyd.postgres 'Findings ohne Klartext + Status; liest Freigaben'
+  cwyd.ingest.writer -> cwyd.postgres 'Manifest: source_hash → sanitized_hash → chunk_hash'
+  hrowner -> cwyd.webui 'Vier-Augen-Freigabe redigierter Dokumente'
+  cwyd.api.review -> cwyd.postgres 'Freigabe an sanitized_hash'
 
   // --------------------------------------------------------------------------
   // Beziehungen: Qualität & Skalierungssignal
@@ -464,7 +485,7 @@ views {
       Alle v1-Container, gruppiert nach Funktionsbereichen.
       Klick auf Chat API / Ingestion / Gateway / Qdrant → Zoom auf L3.
     '''
-    include ma, entra, docsrc, modellquelle, monitoring
+    include ma, hrowner, entra, docsrc, modellquelle, monitoring
 
     group 'Zugriff' {
       include webui, ingress
@@ -529,15 +550,16 @@ views {
   // --- L3: Komponenten -------------------------------------------------------
   view l3_api of cwyd.api {
     title 'L3 · Chat API – Komponenten'
-    description 'Auth → RAG-Pipeline → Retrieval (ACL) → Citations → Feedback; Tool-Client = v2'
+    description 'Auth → RAG-Pipeline → Retrieval (ACL) → Citations → Feedback; Redaction-Review für HR; Tool-Client = v2'
     include *
     include cwyd.postgres
   }
 
   view l3_ingest of cwyd.ingest {
     title 'L3 · Ingestion-Pipeline – Komponenten'
-    description 'Konnektoren → Parser → Chunker → ACL-Enrichment → Embed → Index-Writer'
+    description 'Konnektoren → Parser → PII-Sanitizer → Residual-Check → Chunker → ACL-Enrichment → Embed → Index-Writer'
     include *
+    include cwyd.postgres
   }
 
   view l3_gateway of cwyd.gateway {
@@ -584,14 +606,21 @@ views {
   dynamic view flow_rag_ingestion {
     title 'Flow · RAG-Ingestion'
     description '''
-      Ein Ingestion-Lauf: Dokumente + ACLs → Chunks → Embeddings via
-      LLM-Gateway (ADR-0002, -0009) → versionierte Qdrant-Collection + Manifest.
-      Unveränderte Dokumente (gleicher Content-Hash) werden übersprungen.
+      Ein Ingestion-Lauf: Dokumente + ACLs → PII-Sanitizing (ADR-0016) → Chunks →
+      Embeddings via LLM-Gateway (ADR-0002, -0009) → versionierte Qdrant-Collection + Manifest.
+      Übersprungen wird nur, wenn source_hash und sanitizer_version unverändert sind.
+      Dokumente mit Findings werden erst nach HR-Freigabe (an sanitized_hash) indexiert;
+      Residual-Treffer → Quarantäne (fail closed).
     '''
 
     cwyd.ingest.conn -> docsrc 'liest Dokumente + ACLs'
-    cwyd.ingest.conn -> cwyd.ingest.parser 'Text, Tabellen, Struktur'
-    cwyd.ingest.parser -> cwyd.ingest.chunker 'Chunking'
+    cwyd.ingest.conn -> cwyd.ingest.parser 'Original + source_hash'
+    cwyd.ingest.parser -> cwyd.ingest.sanitizer 'Text, Tabellen, Seiten'
+    cwyd.ingest.sanitizer -> cwyd.ingest.residual 'bereinigter Text + Findings (sanitized_hash)'
+    cwyd.ingest.residual -> cwyd.postgres 'Status indexed / needs_review / quarantined; Freigabe vorhanden?'
+    hrowner -> cwyd.api.review 'Vier-Augen-Freigabe (nur bei Findings)'
+    cwyd.api.review -> cwyd.postgres 'approved_by an sanitized_hash'
+    cwyd.ingest.residual -> cwyd.ingest.chunker 'nur bereinigt + freigegeben'
     cwyd.ingest.chunker -> cwyd.ingest.aclenrich 'Chunks'
     cwyd.ingest.aclenrich -> cwyd.ingest.embedder 'Chunks + acl_groups'
     cwyd.ingest.embedder -> cwyd.gateway 'Embedding-Requests'
@@ -600,7 +629,7 @@ views {
     cwyd.gateway -> cwyd.ingest.embedder 'Vektoren'
     cwyd.ingest.embedder -> cwyd.ingest.writer 'Chunks + Vektoren + Metadaten'
     cwyd.ingest.writer -> cwyd.qdrant 'Upsert/Delete in rag_vN (ADR-0013)'
-    cwyd.ingest.writer -> cwyd.postgres 'Manifest: doc_id, Hash, Chunk-IDs'
+    cwyd.ingest.writer -> cwyd.postgres 'Manifest: source_hash → sanitizer_version → sanitized_hash → chunk_hash'
   }
 
   // --- Flow: RAG-Serving / Live-Request (nummerierte Schrittfolge) --------------

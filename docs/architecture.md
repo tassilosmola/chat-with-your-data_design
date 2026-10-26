@@ -1,6 +1,6 @@
 # Architektur – „Chat with your Data"
 
-v1 ist ein HR-Self-Service-Bot (ADR-0015) für ~10k Mitarbeitende, OnPrem auf der bestehenden Kubernetes-Plattform (ADR-0001). Er besteht aus **8 Bausteinen**. Dokumente laufen über RAG mit ACL-Filter und Citations-Pflicht. Strukturierte Daten über MCP-Tools sind als v2 vorbereitet ([Roadmap](roadmap.md)).
+v1 ist ein HR-Self-Service-Bot (ADR-0015) für ~10k Mitarbeitende, OnPrem auf der bestehenden Kubernetes-Plattform (ADR-0001). Er besteht aus **8 Bausteinen**. Dokumente laufen über RAG mit ACL-Filter und Citations-Pflicht; personenbezogene Daten werden bereits in der Ingestion redigiert (ADR-0016). Strukturierte Daten über MCP-Tools sind als v2 vorbereitet ([Roadmap](roadmap.md)).
 
 
 ## Request-Flow (eine Chat-Anfrage)
@@ -12,6 +12,14 @@ v1 ist ein HR-Self-Service-Bot (ADR-0015) für ~10k Mitarbeitende, OnPrem auf de
 5. **Antwort:** Text + **Citations** (Dokument, Seite). Citation-Check stellt sicher, dass nur Chunks aus dem Kontext zitiert werden
 6. **Nachvollziehbarkeit:** Trace in Langfuse mit Modell-, Prompt- und Index-Version; Verlauf in Postgres
 7. **Qualität:** Feedback → Golden Dataset; deterministische Tests + Ragas-Evals als Release-Gate
+
+## Ingestion-Flow (offline)
+
+1. **Konnektor** liest Original + ACLs, berechnet `source_hash` (Original bleibt unverändert)
+2. **Parser** extrahiert Text, Tabellen, Seiten
+3. **PII-Sanitizer** (Presidio + deutsches NER + eigene Recognizer) ersetzt PII durch typisierte Platzhalter; Funktionsträger in Rolle bleiben (Allowlist), nicht aber zusammen mit persönlichen Merkmalen → `sanitized_hash`
+4. **Residual-Check** (unabhängiger Zweit-Detektor + Injection-Checks; unsichtbarer Text wird schon im Parser verworfen): PII-Resttreffer → Quarantäne; Findings/Injection-Verdacht → HR-Freigabe (Vier-Augen, gebunden an `sanitized_hash`); keine Findings → weiter
+5. **Chunking → ACL-Enrichment → Embeddings → Upsert** in `rag_vN`; Manifest speichert die Kette `source_hash → sanitizer_version → sanitized_hash → chunk_hash`
 
 ## Komponenten-Übersicht
 
@@ -34,20 +42,21 @@ v1 ist ein HR-Self-Service-Bot (ADR-0015) für ~10k Mitarbeitende, OnPrem auf de
 |---|---|---|
 | Unberechtigter Zugriff über RAG | ACL-Filter vor dem LLM, Gruppen-IDs statt Sync, deterministische ACL-Tests in CI | 0007, 0012 |
 | Personenbezogene Daten in Traces/Verläufen | Kein Response-Cache, Retention, Pseudonymisierung, rollenbasierter Langfuse-Zugriff | 0002, 0011 |
+| Personenbezogene Daten in Quelldokumenten landen in Antworten | Redaction vor Chunking, Residual-Check (fail closed), HR-Freigabe, PII-Recall-Gate + Canaries + adversariale Eval-Fragen; Citations ohne Original-Link bei Findings | 0010, 0012, 0016 |
 | Betriebsrat/DSFA blockiert Rollout | Früh einbinden, Betriebsvereinbarung parallel zum PoC | 0011, 0015 |
 | Halluzination trotz RAG | Citations-Pflicht, „keine Quelle“-Schwelle, Citation-Check, Eval-Gate; nächster Schritt Reranking | 0010, 0012 |
 | Tabellen (Pauschalen, Entgeltgruppen) falsch geparst | Strukturerhaltendes Parsing, Ingestion-Checks, Golden-Dataset-Fragen zu Tabellenwerten | 0004, 0012 |
-| Indirekte Prompt-Injection über Dokumente | Kontext als Daten markiert, keine Tools/Aktionen in v1 | 0010 |
+| Indirekte Prompt-Injection über Dokumente | Kontext als Daten markiert, keine Tools/Aktionen in v1; Ingestion-Gate prüft unsichtbaren Text, Steuerzeichen, KI-Anweisungsmuster | 0010, 0016 |
 | Modellqualität onPrem < Cloud-LLM | ~70B-Klasse, Eval misst objektiv, Gateway erlaubt Modellwechsel | 0002, 0003 |
 | GPU-Kapazität bei Lastspitzen | KEDA auf Queue-Länge im festen Pool, Warm-Pool, Backpressure (429); Lasttest vor Rollout | 0003, 0014 |
-| „Welche Daten/welches Modell?“ nicht beantwortbar | Versionsfelder als Pflicht in jedem Trace; Collection-Alias für Rollback | 0013 |
+| „Welche Daten/welches Modell?“ nicht beantwortbar | Versionsfelder als Pflicht in jedem Trace; Collection-Alias für Rollback; Lineage-Hashes über das Sanitizing | 0013, 0016 |
 
 ## Grobe Phasenplanung (Orientierung)
 
 | Phase | Inhalt | Grob-Schätzung |
 |---|---|---|
 | 0 – Setup | GPU-Nodepool, vLLM, Gateway, Qdrant, Langfuse auf bestehender Plattform; Kick-off mit Datenschutz + Betriebsrat | 1–2 Wochen |
-| 1 – PoC | Ingestion der HR-PDFs (inkl. Tabellen), RAG-Pipeline, Chat-API, Referenz-UI, Citations, erste 30 Golden-Fragen mit HR | 3–4 Wochen |
+| 1 – PoC | Ingestion der HR-PDFs (inkl. Tabellen, PII-Sanitizing + PII-Testset, Allowlist mit HR/Datenschutz), RAG-Pipeline, Chat-API, Referenz-UI, Citations, erste 30 Golden-Fragen mit HR | 3–4 Wochen |
 | 2 – Härtung | ACL-Filter + Tests, Group-Overage, Eval-Gate in CI, KEDA + Backpressure, Retention | 2–3 Wochen |
 | 3 – Pilot | HR-Pilot (~100–300 MA), Feedback-Loop, Lasttest, Schwellwerte kalibrieren | 4–6 Wochen |
 | 4 – Rollout | Stufenweiser Ausbau auf 10k MA, Kanalentscheidung (Teams/Web), danach v2 nach [Roadmap](roadmap.md) | fortlaufend |

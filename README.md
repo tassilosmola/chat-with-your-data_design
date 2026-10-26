@@ -23,6 +23,7 @@ Alle ADRs liegen unter [`docs/adr/`](docs/adr/) und folgen einem vereinfachten M
 | [0013](docs/adr/0013-modell-datenversionierung.md) | Modell- & Datenversionierung | proposed | Manifest + Collection-Alias + Git-Pinning (statt DVC/MLflow) |
 | [0014](docs/adr/0014-skalierung-keda-gpu.md) | Skalierung GPU-Workloads | proposed | KEDA auf Request-Queue im festen GPU-Pool + Backpressure |
 | [0015](docs/adr/0015-use-case-scope-v1.md) | Use Case & Scope v1 | proposed | HR-Self-Service, 8 Bausteine, Rest = Roadmap mit Auslöser |
+| [0016](docs/adr/0016-pii-sanitizing-ingestion.md) | PII-Sanitizing in der Ingestion | proposed | Presidio-Redaction vor Chunking, Funktionsträger-Allowlist, HR-Freigabe, Lineage `source_hash → sanitized_hash`; deterministische Injection-Checks im selben Gate |
 
 ## Entscheidungslogik (Zusammenhang)
 
@@ -33,12 +34,12 @@ OnPrem (0001)
         └─> Gateway: Quotas + Backpressure (0002)
               └─> KEDA auf Queue-Länge (0014)
 Datenquellen (0004)
-  ├─> v1: PDFs → Qdrant (0006) mit ACL-Filter (0007)
+  ├─> v1: PDFs → PII-Sanitizing (0016) → Qdrant (0006) mit ACL-Filter (0007)
   └─> v2: Strukturierte Daten → MCP-Tools (0008)
 Qualität
   ├─> Citations + "keine Quelle" (0010)
   └─> Eval: deterministisch + Golden Dataset (0012)
 Betrieb
   ├─> Langfuse + bestehendes Monitoring, DSFA/Betriebsrat (0011)
-  └─> Versionierung leichtgewichtig (0013)
+  └─> Versionierung leichtgewichtig (0013), Lineage über Sanitizing (0016)
 ```

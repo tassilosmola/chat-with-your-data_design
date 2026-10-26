@@ -11,6 +11,7 @@ Grundsatz: v1 ist bewusst minimal (ADR-0015). Jede Erweiterung hat einen **messb
 | bge-m3 Embeddings, Qdrant Hybrid + ACL-Filter | 0006, 0007, 0009 |
 | Citations, "keine Quelle"-Schwelle, Citation-Check | 0010 |
 | Postgres (Verlauf, Feedback, Manifest), Langfuse (Traces, Evals) | 0005, 0011, 0012, 0013 |
+| PII-Sanitizing in der Ingestion (Presidio, Allowlist, Residual-Check, HR-Freigabe) + deterministische Injection-Checks | 0016 |
 
 ## v2 – Strukturierte Daten & mehr Quellen
 
@@ -21,6 +22,9 @@ Grundsatz: v1 ist bewusst minimal (ADR-0015). Jede Erweiterung hat einen **messb
 | Cross-Encoder-Reranking | Context-Recall im Eval unter Ziel | zusätzliche Stufe zwischen Retrieval und Generation | 0010 |
 | Konnektoren SharePoint/Confluence | Zweiter Use Case (z.B. IT-Helpdesk) | Konnektor-Schnittstelle der Ingestion; ACL-Mapping auf Entra-Group-IDs | 0004, 0007 |
 | MS Teams als Kanal | Pilot erfolgreich, Rollout an alle MA | API-first – Teams-Bot ist nur ein weiterer Client | 0005 |
+| LLM-basierter PII-Detektor als zweite Stufe | PERSON-Recall im PII-Testset unter Ziel oder unstrukturierte Quellen (SharePoint/Confluence) | zusätzlicher Detektor im Residual-Check, via Gateway | 0016 |
+| PII-Output-Guard im Serving | Quellen ohne HR-Freigabeprozess | zusätzliche Stufe zwischen Generation und Citation-Assembler | 0016 |
+| Prompt-Injection-Klassifikator (z.B. Prompt Guard) | Nicht kuratierte Quellen oder erste MCP-Tools | zusätzlicher Detektor im Ingestion-Gate (Status `needs_review`) | 0010, 0016 |
 
 ## v3+ – Nach Bedarf
 

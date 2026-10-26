@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Datum:** 2026-10-25
-- **Zusammenhang:** ADR-0006 (Vektor-DB), ADR-0008 (MCP-Tools, v2), ADR-0015 (Scope)
+- **Zusammenhang:** ADR-0006 (Vektor-DB), ADR-0008 (MCP-Tools, v2), ADR-0015 (Scope), ADR-0016 (PII-Sanitizing)
 
 ## Kontext
 
@@ -14,7 +14,7 @@ Die vorliegenden PoC-Daten (`rag-resources/`) sind **ausschließlich Dokumente**
 
 **v1: Ein Quelltyp, eine feste Pipeline.**
 
-- **PDF/Dokumente** → Ingestion (Parsing inkl. Tabellen, Chunking, ACL-Metadaten) → Embeddings → Qdrant
+- **PDF/Dokumente** → Ingestion (Parsing inkl. Tabellen, **PII-Sanitizing** (ADR-0016), Chunking, ACL-Metadaten) → Embeddings → Qdrant
 - Serving als **deterministische Pipeline** statt Agent:
   1. Query-Rewriting mit Chat-Historie (Folgefragen → eigenständige Suchanfrage)
   2. Retrieval mit ACL-Filter (ADR-0007)
@@ -38,5 +38,6 @@ Die Ingestion ist über Konnektoren erweiterbar (SharePoint/Confluence/FAQ), ohn
 
 - Pipeline-Schritte sind einzeln testbar und in Langfuse als Spans sichtbar (ADR-0011)
 - **Tabellen-Parsing** ist kritisch: Reisekosten-/Tarif-Tabellen (Pauschalen, Entgeltgruppen) müssen strukturerhaltend extrahiert werden (z.B. als Markdown-Tabelle im Chunk) – eigener Qualitätscheck in der Ingestion (ADR-0012)
-- **Dokument-Lebenszyklus:** Ingestion erkennt geänderte/gelöschte Dokumente über Content-Hash-Manifest (ADR-0013) und entfernt veraltete Chunks aus dem Index
+- **Personenbezogene Daten** in den Dokumenten werden nach dem Parsing und vor dem Chunking redigiert; Dokumente mit Findings werden erst nach HR-Freigabe indexiert (ADR-0016)
+- **Dokument-Lebenszyklus:** Ingestion erkennt geänderte/gelöschte Dokumente über Content-Hash-Manifest (ADR-0013) und entfernt veraltete Chunks aus dem Index; eine neue Sanitizer-Version löst ebenfalls Re-Ingest aus
 - Der Übergang zu v2 ist additiv: Retrieval wird zu einem „Tool“ unter mehreren

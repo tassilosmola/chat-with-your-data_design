@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Datum:** 2026-10-25
-- **Zusammenhang:** ADR-0010 (Citations → Groundedness-Messung), ADR-0011 (Langfuse Datasets/Scores)
+- **Zusammenhang:** ADR-0010 (Citations → Groundedness-Messung), ADR-0011 (Langfuse Datasets/Scores), ADR-0016 (PII-Verifikation)
 
 ## Kontext
 
@@ -16,6 +16,8 @@ Zwei Qualitätsdimensionen müssen kontinuierlich gesichert werden: **Antwortqua
    - **ACL-Korrektheit:** Testnutzer mit/ohne Gruppen → definierte Chunks dürfen nie bzw. müssen zurückkommen. Sicherheitseigenschaft = harter Test, keine LLM-Metrik.
    - Citation-Check (ADR-0010), "Keine Quelle"-Verhalten bei Fragen außerhalb des Corpus
    - Ingestion-Checks: Parse-Erfolg, Tabellen erkannt, Chunk-Längenverteilung, Duplikate
+   - **PII-Sanitizing (ADR-0016):** Recall-Gate auf annotiertem PII-Testset (100 % für strukturierte IDs), Allowlist-Tests für Funktionsträger, Canary-Tokens dürfen nach Ingestion in keinem Qdrant-Payload auftauchen; synthetische Dokumente mit versteckten/sichtbaren Prompt-Injections müssen erkannt werden, die PoC-PDFs dürfen keinen Fehlalarm erzeugen
+   - **Adversariale PII-Fragen** im Golden Dataset, deterministisch per Regex gegen bekannte PII-Werte geprüft (kein LLM-Judge)
 
 2. **Golden Dataset + LLM-Evals (vor Release/Index-Rebuild)**
    - Kuratiertes Set von ~50–100 Fragen mit Referenzantworten und erwarteten Quellen, gemeinsam mit HR erstellt (ADR-0015)

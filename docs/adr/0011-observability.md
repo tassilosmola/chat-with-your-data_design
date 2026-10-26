@@ -30,5 +30,6 @@ Zwei Observability-Ebenen: (a) **LLM-spezifisch** – Prompts, Retrievals, Antwo
 
 **Datenschutz & Mitbestimmung (Pflicht vor Rollout)**
 - LLM-Traces und Chat-Verläufe enthalten Prompts mit potenziell personenbezogenen Daten → rollenbasierter Zugriff auf Langfuse, definierte **Retention** (z.B. 30 Tage Volltext, danach nur Metriken), User-IDs pseudonymisiert
+- Retrieved Kontext in Traces ist bereits bereinigt (PII-Sanitizing in der Ingestion, ADR-0016); das Restrisiko nicht erkannter PII wird in der DSFA dokumentiert
 - **Datenschutz-Folgenabschätzung (DSFA)** nach Art. 35 DSGVO; Tracing als Verarbeitungstätigkeit dokumentieren
 - **Betriebsrat:** Das Logging von Nutzeranfragen ist eine technische Einrichtung, die zur Leistungs-/Verhaltenskontrolle geeignet ist (§ 87 Abs. 1 Nr. 6 BetrVG) → **Betriebsvereinbarung** vor dem Pilot. Früh einbinden – typischer Blocker für den Zeitplan.
