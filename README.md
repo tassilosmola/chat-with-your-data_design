@@ -10,7 +10,7 @@ Alle ADRs liegen unter [`docs/adr/`](docs/adr/) und folgen einem vereinfachten M
 |-----|-------|--------|------------------|
 | [0001](docs/adr/0001-deployment-onprem-kubernetes.md) | Deployment-Modell | proposed | OnPrem auf bestehender Kubernetes-Plattform |
 | [0002](docs/adr/0002-llm-gateway-abstraktion.md) | LLM-Gateway | proposed | LiteLLM für Quotas, Backpressure, Routing – kein Response-Cache |
-| [0003](docs/adr/0003-llm-modell-sizing.md) | LLM-Modell & GPU-Sizing | open | ~70B Q4 / MoE auf 2 GPUs im PoC, Produktiv-Sizing per Lasttest |
+| [0003](docs/adr/0003-llm-modell-sizing.md) | LLM-Modell & GPU-Sizing | open | kleines MoE ~30B Q4 auf 1 GPU (MIG-fähig) im PoC, Upgrade-Pfad 70B per Eval-Gate |
 | [0004](docs/adr/0004-datenquellen.md) | Datenquellen & Pipeline | proposed | v1: Dokumente, feste RAG-Pipeline ohne Agent; v2: strukturierte Daten |
 | [0005](docs/adr/0005-zugriff-api-first.md) | Zugriffskanal | proposed | API-first, Auth in der API (inkl. Group-Overage), Postgres für Verläufe |
 | [0006](docs/adr/0006-vektordatenbank-qdrant.md) | Vektordatenbank | proposed | Qdrant wegen nativem Hybrid-Search; pgvector als KISS-Alternative |

@@ -239,7 +239,7 @@ model {
 
     container llm 'LLM Serving' {
       #gpu
-      technology 'vLLM · ~70B Q4 (Sizing offen, ADR-0003)'
+      technology 'vLLM · kleines MoE ~30B Q4 (Sizing offen, ADR-0003)'
       description 'Continuous Batching + Prefix-Caching; exportiert num_requests_waiting'
     }
     container emb 'Embedding-Service' {
@@ -420,7 +420,7 @@ deployment {
         description 'Feste OnPrem-GPU-Kapazität; geteilt zwischen Live-Serving und Batch (Eval, Re-Indexierung)'
         llmPod = instanceOf cwyd.llm {
           #gpu
-          description 'vLLM ~70B Q4, 2×GPU/Pod; Kaltstart = Modell laden → Warm-Pool'
+          description 'vLLM kleines MoE ~30B Q4, 1×GPU/Pod (MIG-fähig); Kaltstart = Modell laden → Warm-Pool'
           metadata {
             replicas 'min = Basislast (Warm-Pool) … max = Pool-Kapazität'
             scaler 'KEDA Prometheus-Scaler: vllm:num_requests_waiting'

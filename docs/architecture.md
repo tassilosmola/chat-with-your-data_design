@@ -28,7 +28,7 @@ v1 ist ein HR-Self-Service-Bot (ADR-0015) für ~10k Mitarbeitende, OnPrem auf de
 | 1 | Referenz-UI | einfache Web-UI (austauschbar) | 0005 |
 | 2 | Chat-API | FastAPI, OpenAI-SDK, qdrant-client – kein Agent-Framework | 0004, 0005 |
 | 3 | LLM-Gateway | LiteLLM Proxy | 0002 |
-| 4 | LLM-Serving + Skalierung | vLLM, ~70B Q4 (Sizing offen); KEDA auf Queue-Länge | 0003, 0014 |
+| 4 | LLM-Serving + Skalierung | vLLM, kleines MoE ~30B Q4 (Sizing offen); KEDA auf Queue-Länge | 0003, 0014 |
 | 5 | Embeddings | bge-m3, self-hosted | 0009 |
 | 6 | Vektor-DB | Qdrant (Hybrid, ACL-Payload-Filter, Collection-Alias) | 0006, 0007, 0013 |
 | 7 | Persistenz | Postgres (Verläufe, Feedback, Manifest) | 0005, 0013 |
@@ -47,7 +47,7 @@ v1 ist ein HR-Self-Service-Bot (ADR-0015) für ~10k Mitarbeitende, OnPrem auf de
 | Halluzination trotz RAG | Citations-Pflicht, „keine Quelle“-Schwelle, Citation-Check, Eval-Gate; nächster Schritt Reranking | 0010, 0012 |
 | Tabellen (Pauschalen, Entgeltgruppen) falsch geparst | Strukturerhaltendes Parsing, Ingestion-Checks, Golden-Dataset-Fragen zu Tabellenwerten | 0004, 0012 |
 | Indirekte Prompt-Injection über Dokumente | Kontext als Daten markiert, keine Tools/Aktionen in v1; Ingestion-Gate prüft unsichtbaren Text, Steuerzeichen, KI-Anweisungsmuster | 0010, 0016 |
-| Modellqualität onPrem < Cloud-LLM | ~70B-Klasse, Eval misst objektiv, Gateway erlaubt Modellwechsel | 0002, 0003 |
+| Modellqualität onPrem < Cloud-LLM | kleine MoE-Klasse mit Eval-Gate, Upgrade-Pfad 70B; Gateway erlaubt Modellwechsel | 0002, 0003, 0012 |
 | GPU-Kapazität bei Lastspitzen | KEDA auf Queue-Länge im festen Pool, Warm-Pool, Backpressure (429); Lasttest vor Rollout | 0003, 0014 |
 | „Welche Daten/welches Modell?“ nicht beantwortbar | Versionsfelder als Pflicht in jedem Trace; Collection-Alias für Rollback; Lineage-Hashes über das Sanitizing | 0013, 0016 |
 

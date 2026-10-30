@@ -502,9 +502,9 @@
       kind: 'instance',
       title: 'LLM Serving',
       description: {
-        txt: 'vLLM ~70B Q4, 2×GPU/Pod; Kaltstart = Modell laden → Warm-Pool',
+        txt: 'vLLM kleines MoE ~30B Q4, 1×GPU/Pod (MIG-fähig); Kaltstart = Modell laden → Warm-Pool',
       },
-      technology: 'vLLM · ~70B Q4 (Sizing offen, ADR-0003)',
+      technology: 'vLLM · kleines MoE ~30B Q4 (Sizing offen, ADR-0003)',
       tags: [
         'gpu',
       ],

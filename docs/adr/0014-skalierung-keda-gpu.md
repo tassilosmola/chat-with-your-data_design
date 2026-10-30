@@ -26,7 +26,7 @@
 - **Node-Ebene:** OnPrem i.d.R. **kein** Cluster-Autoscaler für Bare-Metal-GPU-Nodes → fester Pool, Erweiterung per Kapazitätsplanung. In einer Private Cloud mit GPU-Provisionierung kann ein Cluster-Autoscaler ergänzt werden.
 - **Übrige Services** (Chat-API, Gateway, Ingestion-Worker): Standard-HPA bzw. KEDA auf Queue-Tiefe der Ingestion
 
-**PoC-Hinweis:** Mit 2 GPUs (= 1 vLLM-Replica, ADR-0003) gibt es im PoC nichts zu skalieren. Im PoC werden **Metrik, ScaledObject und Backpressure** aufgebaut und im Lasttest verifiziert; wirksam wird die Skalierung mit dem Produktiv-Pool.
+**PoC-Hinweis:** Mit dem kleinen MoE-Modell (ADR-0003) ist 1× GPU = 1 vLLM-Replica – schon 2 PoC-GPUs erlauben eine 1↔2-Replica-Skalierung. Zusätzlich kann eine GPU per **MIG** (GPU Operator, `mixed`-Strategie) zwischen Serving und Batch-Jobs partitioniert werden. Im PoC werden **Metrik, ScaledObject und Backpressure** aufgebaut und im Lasttest verifiziert; wirksam wird die Skalierung mit dem Produktiv-Pool.
 
 ## Betrachtete Alternativen
 
@@ -41,7 +41,7 @@
 
 **Positiv**
 - Skalierung am eigentlichen Engpass (Request-Queue) → vorhersagbares Verhalten unter Lastspitzen
-- GPU-Pool wird zwischen Live-Serving und Batch-Workloads (Eval, Re-Indexierung) geteilt
+- GPU-Pool wird zwischen Live-Serving und Batch-Workloads (Eval, Re-Indexierung) geteilt – zeitlich (Cron) oder, weil das Modell MIG-fähig ist (ADR-0003), **räumlich** als feste Slices mit Hardware-Isolation
 - KEDA additiv, kein Vendor-Lock-in
 
 **Negativ / Risiken**
